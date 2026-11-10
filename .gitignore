@@ -1,0 +1,22 @@
+# dependencies and build output
+node_modules/
+out/
+dist/
+
+# test runs (sample projects, screenshots)
+.smoke/
+
+# logs and OS clutter
+*.log
+.DS_Store
+Thumbs.db
+
+# local secrets: never commit
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+known_hosts
