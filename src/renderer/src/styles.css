@@ -241,3 +241,13 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 .tab .page-icon .activity-letter { width: 14px; height: 14px; font-size: 9px; border-width: 1.2px; border-radius: 3px; }
 .empty-actions { display: flex; gap: 8px; margin-bottom: 6px; }
 .empty-actions:empty { display: none; }
+
+/* HTML preview tab */
+.crumbs .crumb-btn { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 8px; border-radius: 4px; color: var(--fg-muted); border: 1px solid var(--border-strong); font-size: 11px; }
+.crumbs .crumb-btn:hover { color: var(--fg); border-color: var(--accent); }
+.preview { display: flex; flex-direction: column; min-height: 0; }
+.preview-bar { height: 30px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--bg-line); background: var(--bg-chrome); font-size: 12px; color: var(--fg-muted); }
+.preview-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumbs .crumb-btn span { color: inherit; }
+.preview-status { color: var(--error); }
+.preview-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }

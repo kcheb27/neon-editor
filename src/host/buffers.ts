@@ -154,6 +154,17 @@ export class BufferStore {
     return { open: !!buf, dirty: !!buf?.dirty, windows: buf?.subs.size ?? 0 }
   }
 
+  /** The current text of an open file, unsaved edits included; null if it is not open. */
+  currentText(path: string): string | null {
+    let buf = this.bufs.get(path)
+    if (!buf && /^[a-zA-Z]:[\\/]/.test(path)) {
+      // Windows paths: the same file may be spelled with different case.
+      const key = path.toLowerCase()
+      buf = [...this.bufs.values()].find((b) => b.path.toLowerCase() === key)
+    }
+    return buf ? buf.text.toString() : null
+  }
+
   openPaths(): string[] {
     return [...this.bufs.keys()]
   }

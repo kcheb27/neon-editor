@@ -1,16 +1,19 @@
 // Main process: creates windows, starts one Workspace Host per project, and remembers where
 // each project's windows were so they come back on the same monitors.
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MessageChannelMain, screen, shell, utilityProcess } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MessageChannelMain, protocol, screen, shell, utilityProcess } from 'electron'
 import type { Rectangle, UtilityProcess } from 'electron'
 import * as fs from 'node:fs'
 import { createRequire } from 'node:module'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { listHosts } from '../host/ssh/config'
 import type { SshHostEntry, WindowInit, WindowLayout } from '../shared/protocol'
 import { isRemoteId, makeRemoteId, workspaceLabel } from '../shared/workspaceId'
-import { handlePluginProtocol, listPlugins, pluginFolders, registerPluginScheme, scanPlugins, storageGet, storageSet } from './plugins'
+import { fileUnder } from '../shared/previewPath'
+import { mimeOf } from './pluginManifest'
+import { handlePluginProtocol, listPlugins, pluginFolders, PREVIEW_SCHEME, registerSchemes, scanPlugins, storageGet, storageSet } from './plugins'
 
 const labelOf = (folder: string): string => workspaceLabel(folder, (p) => path.basename(p) || p)
 
@@ -45,7 +48,7 @@ interface WinMeta {
 const smokeScript = !app.isPackaged ? process.env.NEON_SMOKE : undefined
 if (smokeScript) app.setPath('userData', path.join(os.tmpdir(), `neon-smoke-${process.pid}`))
 
-registerPluginScheme() // must happen before the app is ready
+registerSchemes() // must happen before the app is ready
 
 const workspaces = new Map<string, Workspace>()
 const meta = new Map<BrowserWindow, WinMeta>()
@@ -240,18 +243,60 @@ function createWindow(ws: Workspace | null, saved?: SavedWindow, from?: BrowserW
 
 // ---------- workspaces ----------
 
-function hostRequest<T>(ws: Workspace, type: string, fallback: T): Promise<T> {
+function hostRequest<T>(ws: Workspace, type: string, fallback: T, args?: unknown, timeoutMs = 5000): Promise<T> {
   return new Promise((resolve) => {
     const id = ws.nextRequest++
     const timer = setTimeout(() => {
       ws.replies.delete(id)
       resolve(fallback)
-    }, 5000)
+    }, timeoutMs)
     ws.replies.set(id, (result) => {
       clearTimeout(timer)
       resolve(result as T)
     })
-    ws.host.postMessage({ type, id })
+    ws.host.postMessage({ type, id, args })
+  })
+}
+
+// ---------- HTML preview ----------
+// A preview shows neon-preview://<token>/<path under root>. Each token stands for one project and
+// a root folder; files are read through that project's Workspace Host, so previews work over SSH
+// and show unsaved edits of open files.
+
+const previews = new Map<string, { ws: Workspace; root: string }>()
+
+ipcMain.handle('preview:start', (event, root: string) => {
+  const win = senderWindow(event)
+  const ws = win ? meta.get(win)?.ws : null
+  if (!ws || typeof root !== 'string' || !root) throw new Error('No project in this window')
+  for (const [token, p] of previews) if (p.ws === ws && p.root === root) return token
+  const token = `p${Math.random().toString(16).slice(2, 10)}${Date.now().toString(16)}`
+  previews.set(token, { ws, root })
+  return token
+})
+
+// The saved file in the system browser (local projects only).
+ipcMain.handle('preview:openInBrowser', async (_event, file: string) => {
+  if (typeof file !== 'string' || !/\.x?html?$/i.test(file) || !path.isAbsolute(file) || !fs.existsSync(file)) {
+    throw new Error('Only a saved HTML file on this machine can open in the browser')
+  }
+  await shell.openExternal(pathToFileURL(file).toString())
+})
+
+function handlePreviewProtocol(): void {
+  protocol.handle(PREVIEW_SCHEME, async (request) => {
+    const url = new URL(request.url)
+    const headers = { 'access-control-allow-origin': '*', 'cache-control': 'no-store' }
+    const preview = previews.get(url.hostname)
+    if (!preview || !workspaces.has(preview.ws.folder)) return new Response('This preview is closed', { status: 404, headers })
+    const file = fileUnder(preview.root, url.pathname)
+    if (!file) return new Response('Bad path', { status: 400, headers })
+    const r = await hostRequest<{ data?: Uint8Array; error?: string }>(preview.ws, 'preview.read', { error: 'Timed out' }, { path: file }, 20000)
+    if (!r.data) {
+      const status = /no such|ENOENT|not found/i.test(r.error ?? '') ? 404 : 500
+      return new Response(`${r.error ?? 'Could not read'}: ${file}`, { status, headers: { ...headers, 'content-type': 'text/plain; charset=utf-8' } })
+    }
+    return new Response(Buffer.from(r.data), { headers: { ...headers, 'content-type': mimeOf(file) } })
   })
 }
 
@@ -309,6 +354,7 @@ function startWorkspace(folder: string): Workspace {
     resolve?.(msg.result)
   })
   host.on('exit', (code) => {
+    for (const [token, p] of previews) if (p.ws === ws) previews.delete(token)
     if (workspaces.get(folder) === ws && ws.windows.length > 0) {
       console.error(`[main] Workspace Host for ${folder} exited unexpectedly (code ${code})`)
     }
@@ -525,6 +571,7 @@ void app.whenReady().then(async () => {
   loadState()
   scanPlugins()
   handlePluginProtocol()
+  handlePreviewProtocol()
   // The app draws its own menus in the title bar. macOS keeps the system menu for Cmd+Q, copy and paste.
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 

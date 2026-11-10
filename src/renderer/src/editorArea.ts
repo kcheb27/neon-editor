@@ -70,6 +70,8 @@ export class EditorArea {
   private opening = new Map<string, Promise<OpenFile | null>>()
   /** Called whenever tabs, the active file or dirty state change. */
   onChange: () => void = () => {}
+  /** Buttons at the right of the breadcrumb bar for the active file (e.g. "Preview"). */
+  crumbActions: (path: string) => HTMLElement[] = () => []
 
   constructor(host: Host, root: string) {
     this.host = host
@@ -436,6 +438,8 @@ export class EditorArea {
         if (i > 0) crumbs.push(h('span', { class: 'muted', text: '›' }))
         crumbs.push(h('span', { text: part }))
       })
+      const actions = this.crumbActions(this.active)
+      if (actions.length) crumbs.push(h('span', { style: 'flex:1' }), ...actions)
       this.crumbsEl.replaceChildren(...crumbs)
       this.crumbsEl.style.display = ''
       this.emptyEl.style.display = 'none'

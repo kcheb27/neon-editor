@@ -16,10 +16,17 @@ import { PLUGIN_API_JS } from './pluginApi'
 
 export const PLUGIN_SCHEME = 'neon-plugin'
 
-/** Must run before the app is ready. */
-export function registerPluginScheme(): void {
+export const PREVIEW_SCHEME = 'neon-preview'
+
+/**
+ * Registers the app's own URL schemes: plugin files and the HTML preview. Must run before the
+ * app is ready, and only once (a later call would replace this list).
+ */
+export function registerSchemes(): void {
+  const privileges = { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
   protocol.registerSchemesAsPrivileged([
-    { scheme: PLUGIN_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }
+    { scheme: PLUGIN_SCHEME, privileges },
+    { scheme: PREVIEW_SCHEME, privileges }
   ])
 }
 

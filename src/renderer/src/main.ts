@@ -17,6 +17,7 @@ import { monaco, setupMonaco } from './monacoSetup'
 import type { Host } from './rpc'
 import { neon, waitForHostPort } from './rpc'
 import { PluginScreenView } from './plugins'
+import { HtmlPreview, isHtmlFile, previewFile, previewId, samePreview } from './preview'
 import type { PluginBridgeContext } from './plugins'
 import { GitView, RemoteView, SearchView } from './sideViews'
 import { BottomPanel } from './terminalPanel'
@@ -222,8 +223,40 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
   const editors = new EditorArea(host, root)
   const openFile = (p: string, line?: number, col?: number): void => void editors.open(p, line, col)
 
+  // ---- HTML preview (editor tabs) ----
+  /** Opens (or switches to) the live preview of an HTML file. */
+  function openPreview(file: string): void {
+    const existing = editors.pageIds.find((id) => {
+      const f = previewFile(id)
+      return f !== null && samePreview(f, file)
+    })
+    if (existing) {
+      editors.focusPage(existing)
+      return
+    }
+    editors.openPage(new HtmlPreview(file, { host, root, remote: info.remote }).page)
+  }
+  editors.crumbActions = (p) => {
+    if (!isHtmlFile(p)) return []
+    const b = h('button', { class: 'crumb-btn', title: 'Open a live preview (Ctrl+Shift+V)' }, icon('code', 12, 2), h('span', { text: 'Preview' }))
+    b.addEventListener('click', () => openPreview(p))
+    return [b]
+  }
+  function previewActive(): void {
+    const p = editors.activePath
+    if (p && isHtmlFile(p)) openPreview(p)
+    else toast('Open an HTML file to preview it')
+  }
+
   // ---- sidebar views ----
-  const explorer = new FileTree({ host, workspaceRoot: root, remoteHost: info.sshHost, getGit: () => git, openFile })
+  const explorer = new FileTree({
+    host,
+    workspaceRoot: root,
+    remoteHost: info.sshHost,
+    getGit: () => git,
+    openFile,
+    extraMenu: (p, isDir) => (!isDir && isHtmlFile(p) ? [{ label: 'Open Preview', run: () => openPreview(p) }] : [])
+  })
   const remoteView = new RemoteView(info.sshHost, (target) => void connectToHost(target))
   const search = new SearchView(host, root, openFile)
   const gitView = new GitView(root, openFile)
@@ -750,6 +783,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     { id: 'close', label: 'View: Close Editor', keybinding: 'Ctrl+W', run: () => closeActiveTab() },
     { id: 'newWindow', label: 'Window: New Window for This Project', keybinding: 'Ctrl+Shift+N', run: () => void neon.invoke('window:new') },
     { id: 'openFile', label: 'File: Open File…', keybinding: 'Ctrl+Alt+O', run: () => void openFileDialog() },
+    { id: 'preview', label: 'HTML: Open Preview', keybinding: 'Ctrl+Shift+V', run: () => previewActive() },
     { id: 'openFolder', label: 'File: Open Folder…', keybinding: 'Ctrl+O', run: () => void neon.invoke('workspace:pick') },
     { id: 'connect', label: 'Remote: Connect to SSH Host…', run: () => void connectToHost() },
     { id: 'remote', label: 'View: Show Remote Explorer', run: () => showView('remote') },
@@ -872,6 +906,8 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       else if (shift && k === 'f') run = () => showView('search')
       else if (shift && k === 'g') run = () => showView('git')
       else if (shift && k === 'i') run = () => void neon.invoke('window:devtools')
+      // Ctrl+Shift+V pastes in a terminal; elsewhere it previews the active HTML file.
+      else if (shift && k === 'v' && editors.activePath && isHtmlFile(editors.activePath) && !(e.target as Element | null)?.closest?.('.xterm')) run = () => previewActive()
       else if (k === 'tab') run = () => editors.cycle(shift ? -1 : 1)
       if (!run) return
       e.preventDefault()
@@ -888,7 +924,11 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     .then(applyGit)
     .catch(() => applyGit({ repo: false, branch: '', ahead: 0, behind: 0, files: {} }))
   for (const p of saved.tabs) await editors.open(p)
-  for (const id of saved.pages ?? []) if (findScreen(id)) openPluginTab(id)
+  for (const id of saved.pages ?? []) {
+    const file = previewFile(id)
+    if (file) openPreview(file)
+    else if (findScreen(id)) openPluginTab(id)
+  }
   if (saved.activePage && editors.focusPage(saved.activePage)) {
     // a plugin tab was active
   } else if (saved.active) await editors.open(saved.active)

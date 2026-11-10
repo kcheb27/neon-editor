@@ -52,6 +52,10 @@ export class Host {
     if (!set) this.listeners.set(method, (set = new Set()))
     set.add(fn)
   }
+
+  off(method: string, fn: Listener): void {
+    this.listeners.get(method)?.delete(fn)
+  }
 }
 
 /** Resolves with the host connection once the main process has delivered its port. */

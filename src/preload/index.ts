@@ -13,6 +13,8 @@ const INVOKE = new Set([
   'shell:trash',
   'shell:reveal',
   'shell:openExternal',
+  'preview:start',
+  'preview:openInBrowser',
   'dialog:confirm',
   'dialog:openFiles',
   'workspace:openFile',

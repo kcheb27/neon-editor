@@ -94,7 +94,17 @@ const MIME: Record<string, string> = {
   '.ttf': 'font/ttf',
   '.wasm': 'application/wasm',
   '.txt': 'text/plain; charset=utf-8',
-  '.md': 'text/plain; charset=utf-8'
+  '.md': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.otf': 'font/otf',
+  '.map': 'application/json; charset=utf-8',
+  '.pdf': 'application/pdf'
 }
 
 export function mimeOf(file: string): string {

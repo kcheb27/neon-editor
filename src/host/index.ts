@@ -254,6 +254,17 @@ process.parentPort.on('message', async (event) => {
     attach(event.ports[0])
   } else if (msg.type === 'dirty') {
     process.parentPort.postMessage({ type: 'reply', id: msg.id, result: buffers.dirtyPaths() })
+  } else if (msg.type === 'preview.read') {
+    // A file for the HTML preview: an open file's current text (unsaved edits too), else the disk.
+    const p = String((msg as { args?: { path?: unknown } }).args?.path ?? '')
+    let result: { data?: Uint8Array; error?: string }
+    try {
+      const open = buffers.currentText(p)
+      result = { data: open !== null ? new TextEncoder().encode(open) : await backend.readFile(p) }
+    } catch (err) {
+      result = { error: err instanceof Error ? err.message : String(err) }
+    }
+    process.parentPort.postMessage({ type: 'reply', id: msg.id, result })
   } else if (msg.type === 'saveAll') {
     let error: string | null = null
     try {
