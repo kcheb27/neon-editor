@@ -251,3 +251,4 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 .crumbs .crumb-btn span { color: inherit; }
 .preview-status { color: var(--error); }
 .preview-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+.preview-frame.markdown { background: var(--bg-editor); }

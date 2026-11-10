@@ -12,6 +12,9 @@ import { errorMessage, toast } from './ui'
 import { basename, dirname, h, icon, isInside, pathKey } from './util'
 
 export const isHtmlFile = (p: string): boolean => /\.x?html?$/i.test(p)
+export const isMarkdownFile = (p: string): boolean => /\.(md|markdown|mdown|mkd)$/i.test(p)
+/** Files that can be previewed: HTML pages, and markdown (rendered by the main process). */
+export const isPreviewable = (p: string): boolean => isHtmlFile(p) || isMarkdownFile(p)
 
 const RELOAD_DELAY_MS = 400
 
@@ -40,17 +43,21 @@ export class HtmlPreview {
     // outside the project (opened with Open File) gets its own folder as the root.
     this.webRoot = isInside(ctx.root, file) ? ctx.root : dirname(file)
 
+    const markdown = isMarkdownFile(file)
     this.frame = h('iframe', {
-      class: 'preview-frame',
+      class: `preview-frame${markdown ? ' markdown' : ''}`,
       title: `Preview of ${basename(file)}`,
-      // Scripts run, but in an opaque origin: the page cannot reach the editor.
-      sandbox: 'allow-scripts allow-forms allow-modals allow-popups allow-downloads'
+      // HTML: scripts run, but in an opaque origin, so the page cannot reach the editor.
+      // Markdown: no scripts at all. Popups let web links open in the browser.
+      sandbox: markdown
+        ? 'allow-popups allow-popups-to-escape-sandbox'
+        : 'allow-scripts allow-forms allow-modals allow-popups allow-downloads'
     }) as HTMLIFrameElement
 
     const reload = h('button', { class: 'icon-btn', 'aria-label': 'Reload preview', title: 'Reload' }, icon('refresh', 14, 2))
     reload.addEventListener('click', () => this.reload())
     const bar: HTMLElement[] = [h('span', { class: 'preview-path', text: file, title: file }), (this.statusEl = h('span', { class: 'preview-status' })), reload]
-    if (!ctx.remote) {
+    if (!ctx.remote && !markdown) {
       const external = h('button', { class: 'icon-btn', 'aria-label': 'Open in browser', title: 'Open the saved file in your browser' }, icon('windows', 14, 2))
       external.addEventListener('click', () => void neon.invoke('preview:openInBrowser', file).catch((err) => toast(errorMessage(err), 'error')))
       bar.push(external)
@@ -61,7 +68,7 @@ export class HtmlPreview {
       id: previewId(file),
       title: `Preview ${basename(file)}`,
       detail: `Preview of ${file}`,
-      icon: () => icon('code', 14, 2),
+      icon: () => icon(markdown ? 'files' : 'code', 14, 2),
       el,
       onVisible: (on) => {
         this.visible = on

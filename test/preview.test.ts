@@ -23,3 +23,20 @@ test('files get URL paths relative to the root', () => {
   assert.equal(urlPathOf('/home/pi/site', '/home/pi/other/x.html'), null)
   assert.equal(urlPathOf('/home/pi/site', '/home/pi/site2/x.html'), null)
 })
+
+test('markdown renders to a page; web links open outside, relative links stay', async () => {
+  const { markdownPage, isMarkdownFile } = await import('../src/main/markdownPage.ts')
+  const html = markdownPage(
+    '# Title\n\n- [x] done\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n[site](https://example.com) [docs](docs/PLUGINS.md) ![logo](img/logo.png)\n',
+    'README <md>'
+  )
+  assert.match(html, /<h1[^>]*>Title<\/h1>/)
+  assert.match(html, /<table>/)
+  assert.match(html, /type="checkbox"/)
+  assert.match(html, /<a href="https:\/\/example.com" target="_blank" rel="noopener noreferrer">site<\/a>/)
+  assert.match(html, /<a href="docs\/PLUGINS.md">docs<\/a>/)
+  assert.match(html, /<img src="img\/logo.png" alt="logo">/)
+  assert.match(html, /<title>README &lt;md&gt;<\/title>/)
+  assert.match(html, /script-src 'none'/)
+  assert.ok(isMarkdownFile('README.md') && isMarkdownFile('x.MARKDOWN') && !isMarkdownFile('x.mdx'))
+})

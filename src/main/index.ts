@@ -12,6 +12,7 @@ import { listHosts } from '../host/ssh/config'
 import type { SshHostEntry, WindowInit, WindowLayout } from '../shared/protocol'
 import { isRemoteId, makeRemoteId, workspaceLabel } from '../shared/workspaceId'
 import { fileUnder } from '../shared/previewPath'
+import { isMarkdownFile, markdownPage } from './markdownPage'
 import { mimeOf } from './pluginManifest'
 import { handlePluginProtocol, listPlugins, pluginFolders, PREVIEW_SCHEME, registerSchemes, scanPlugins, storageGet, storageSet } from './plugins'
 
@@ -295,6 +296,13 @@ function handlePreviewProtocol(): void {
     if (!r.data) {
       const status = /no such|ENOENT|not found/i.test(r.error ?? '') ? 404 : 500
       return new Response(`${r.error ?? 'Could not read'}: ${file}`, { status, headers: { ...headers, 'content-type': 'text/plain; charset=utf-8' } })
+    }
+    // A markdown file opened as a page (not fetched by a script) is shown rendered.
+    if (isMarkdownFile(file) && ((request.headers.get('accept') ?? '').includes('text/html') || url.searchParams.has('t'))) {
+      const html = markdownPage(Buffer.from(r.data).toString('utf8'), path.basename(file))
+      return new Response(html, {
+        headers: { ...headers, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "script-src 'none'; object-src 'none'" }
+      })
     }
     return new Response(Buffer.from(r.data), { headers: { ...headers, 'content-type': mimeOf(file) } })
   })
