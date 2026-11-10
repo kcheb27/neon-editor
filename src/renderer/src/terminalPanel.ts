@@ -1,10 +1,12 @@
 // Bottom panel: terminals (each with a file tree that follows its working directory) and Problems.
 
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import type { GitStatus, SshHostEntry, TermCreated } from '../../shared/protocol'
 import { monaco, palette } from './monacoSetup'
 import { neon, type Host } from './rpc'
+import { findPaths, resolvePath } from './termLinks'
 import { FileTree } from './tree'
 import { ask, errorMessage, modal, showMenu, toast } from './ui'
 import { basename, dirname, h, icon, pathKey, relative, tildify } from './util'
@@ -173,6 +175,12 @@ export class BottomPanel {
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    // Web links open in the browser.
+    term.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        void neon.invoke('shell:openExternal', uri).catch((err) => toast(`Could not open link: ${errorMessage(err)}`, 'error'))
+      })
+    )
     const el = h('div', { class: 'term-view' })
     this.termArea.append(el)
     el.classList.add('on')
@@ -281,9 +289,69 @@ export class BottomPanel {
         { label: 'Paste', run: () => { paste(); term.focus() } }
       ])
     })
+    this.addPathLinks(tv)
     void tree.setRoot(created.cwd)
     this.select(tv)
     return tv
+  }
+
+  // Paths that exist, by "target|path": true for a folder, false for a file, null for missing.
+  private statCache = new Map<string, { at: number; value: Promise<boolean | null> }>()
+
+  private isDir(target: string, path: string): Promise<boolean | null> {
+    const key = `${target}|${path}`
+    const hit = this.statCache.get(key)
+    if (hit && Date.now() - hit.at < 10000) return hit.value
+    const value = this.ctx.host
+      .call<{ isDir: boolean }>('fs.stat', { path, target: target || undefined })
+      .then((s) => !!s.isDir)
+      .catch(() => null)
+    this.statCache.set(key, { at: Date.now(), value })
+    if (this.statCache.size > 2000) this.statCache.delete(this.statCache.keys().next().value!)
+    return value
+  }
+
+  /**
+   * File paths in the output ("src/app.ts:12:5") become links when they exist on the shell's
+   * machine: files open at that line, folders show in the explorer.
+   */
+  private addPathLinks(tv: TermView): void {
+    tv.term.registerLinkProvider({
+      provideLinks: (y, callback) => {
+        const line = tv.term.buffer.active.getLine(y - 1)
+        const text = line?.translateToString(true) ?? ''
+        const found = text.length < 2000 ? findPaths(text) : []
+        // A shell that moved elsewhere with `ssh` has paths we cannot check.
+        if (!found.length || tv.remoteHost) return callback(undefined)
+        void Promise.all(
+          found.map(async (m) => {
+            const full = resolvePath(tv.cwd, m.path, tv.home)
+            const dir = await this.isDir(tv.target, full)
+            if (dir === null) return null
+            return {
+              range: { start: { x: m.index + 1, y }, end: { x: m.index + m.text.length, y } },
+              text: m.text,
+              decorations: { underline: true, pointerCursor: true },
+              activate: () => this.openLinkedPath(tv, full, dir, m.line, m.col)
+            }
+          })
+        ).then((links) => {
+          const ok = links.filter((l) => l !== null)
+          callback(ok.length ? ok : undefined)
+        })
+      }
+    })
+  }
+
+  private openLinkedPath(tv: TermView, path: string, isDir: boolean, line?: number, col?: number): void {
+    if (tv.target) {
+      // Not the workspace's machine: this window cannot edit it.
+      void this.openElsewhere(tv.target, isDir ? path : dirname(path), isDir ? undefined : basename(path))
+    } else if (isDir) {
+      this.ctx.revealInExplorer(path)
+    } else {
+      this.ctx.openFile(path, line, col)
+    }
   }
 
   /** A file or folder on another machine: offer to open its folder as a workspace in a new window. */

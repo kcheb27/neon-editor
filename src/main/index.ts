@@ -421,6 +421,12 @@ ipcMain.handle('clipboard:write', (_event, text: string) => clipboard.writeText(
 
 ipcMain.handle('shell:trash', (_event, target: string) => shell.trashItem(target))
 ipcMain.handle('shell:reveal', (_event, target: string) => shell.showItemInFolder(target))
+// Links clicked in a terminal. Only web and mail links: never file: or custom schemes.
+ipcMain.handle('shell:openExternal', (_event, url: string) => {
+  const u = new URL(String(url))
+  if (!['http:', 'https:', 'mailto:'].includes(u.protocol)) throw new Error(`Not opening ${u.protocol} links`)
+  return shell.openExternal(u.toString())
+})
 
 ipcMain.handle('dialog:confirm', async (event, opts: { message: string; detail?: string; buttons: string[] }) => {
   const win = senderWindow(event)

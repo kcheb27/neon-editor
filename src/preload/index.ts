@@ -12,6 +12,7 @@ const INVOKE = new Set([
   'ssh:hosts',
   'shell:trash',
   'shell:reveal',
+  'shell:openExternal',
   'dialog:confirm',
   'clipboard:read',
   'clipboard:write',

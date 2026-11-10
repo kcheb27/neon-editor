@@ -123,6 +123,7 @@ const handlers: Record<string, Handler> = {
   'fs.create': (_c, a) => fsFor(a.target).create(a.path, a.kind),
   'fs.rename': (_c, a) => fsFor(a.target).rename(a.from, a.to),
   'fs.trash': (_c, a) => fsFor(a.target).trash(a.path),
+  'fs.stat': (_c, a) => fsFor(a.target).stat(a.path),
   'fs.list': () => backend.list(),
   // Plain text access for plugins. Files open in an editor are reloaded by the file watcher.
   'fs.readText': async (_c, a) => decodeText(await backend.readFile(a.path)).text,
