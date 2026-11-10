@@ -10,18 +10,20 @@ import '@fontsource/jetbrains-mono/400-italic.css'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 
-import type { GitStatus, RemoteStatus, SshHostEntry, WindowInit, WindowLayout, WorkspaceInfo } from '../../shared/protocol'
+import type { GitStatus, PluginInfo, PluginList, PluginScreen, RemoteStatus, SshHostEntry, WindowInit, WindowLayout, WorkspaceInfo } from '../../shared/protocol'
 import { parseRemoteId, workspaceLabel } from '../../shared/workspaceId'
 import { EditorArea } from './editorArea'
 import { monaco, setupMonaco } from './monacoSetup'
 import type { Host } from './rpc'
 import { neon, waitForHostPort } from './rpc'
+import { PluginScreenView } from './plugins'
+import type { PluginBridgeContext } from './plugins'
 import { GitView, RemoteView, SearchView } from './sideViews'
 import { BottomPanel } from './terminalPanel'
 import { FileTree } from './tree'
 import { ask, errorMessage, modal, pick, toast } from './ui'
 import type { PickItem } from './ui'
-import { basename, debounce, dirname, h, icon, relative, setPlatform, tildify } from './util'
+import { basename, debounce, dirname, h, icon, isIconName, relative, setPlatform, tildify } from './util'
 import type { IconName } from './util'
 
 const app = document.getElementById('app')!
@@ -227,7 +229,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
 
   const refreshBtn = h('button', { class: 'icon-btn', 'aria-label': 'Refresh explorer', title: 'Refresh' }, icon('refresh', 14, 2))
   refreshBtn.addEventListener('click', () => void explorer.refresh([root, ...explorer.getExpanded()]))
-  const views: Record<string, { title: string; icon: IconName; label: string; el: HTMLElement }> = {
+  const views: Record<string, { title: string; icon: IconName; label: string; el: HTMLElement; iconEl?: () => Element }> = {
     explorer: {
       title: `Explorer: ${label}`,
       icon: 'files',
@@ -253,6 +255,73 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       el: h('div', { class: 'view' }, h('div', { class: 'section-title', text: 'Remote Explorer' }), remoteView.el)
     }
   }
+  // ---- plugin screens (sidebar views from plugin folders) ----
+  const emptyPlugins: PluginList = { plugins: [], errors: [], folders: [] }
+  let pluginList = ((await neon.invoke('plugins:list').catch(() => emptyPlugins)) as PluginList) ?? emptyPlugins
+  /** Screens that have been shown at least once (their page is loaded), by view id. */
+  const pluginScreens = new Map<string, PluginScreenView>()
+  const pluginViewIds = new Set<string>()
+  const pluginBridge: PluginBridgeContext = {
+    host,
+    info,
+    openFile,
+    activeFile: () => editors.activePath,
+    runInTerminal: async (command, target) => {
+      togglePanel(true)
+      await panel.runCommand(command, target)
+    },
+    commands: () => allCommands()
+  }
+  const pluginViewId = (p: PluginInfo, s: PluginScreen): string => `plugin:${p.id}:${s.id}`
+  function pluginIcon(p: PluginInfo, s: PluginScreen): Element {
+    if (s.icon && isIconName(s.icon)) return icon(s.icon, 24, 1.6)
+    if (/\.(svg|png)$/i.test(s.icon)) return h('img', { src: `neon-plugin://${p.id}/${s.icon}`, width: '24', height: '24', alt: '' })
+    return h('span', { class: 'activity-letter', text: (s.title.trim()[0] ?? '?').toUpperCase() })
+  }
+  function addPluginViews(): void {
+    for (const p of pluginList.plugins) {
+      for (const s of p.screens) {
+        const id = pluginViewId(p, s)
+        const body = h('div', { class: 'plugin-body' })
+        views[id] = {
+          title: s.title,
+          icon: 'code',
+          iconEl: () => pluginIcon(p, s),
+          label: `${s.title} (${p.name})`,
+          el: h(
+            'div',
+            { class: 'view hidden', 'data-plugin': p.id },
+            h('div', { class: 'section-title' }, h('span', { class: 'grow', text: s.title, title: `${p.name} ${p.version}` })),
+            body
+          )
+        }
+        pluginViewIds.add(id)
+      }
+    }
+  }
+  /** Loads a screen's page the first time it is shown. */
+  function mountPluginScreen(id: string): PluginScreenView | null {
+    const existing = pluginScreens.get(id)
+    if (existing) return existing
+    for (const p of pluginList.plugins) {
+      for (const s of p.screens) {
+        if (pluginViewId(p, s) !== id) continue
+        const screen = new PluginScreenView(p, s, pluginBridge)
+        views[id].el.querySelector('.plugin-body')!.append(screen.el)
+        pluginScreens.set(id, screen)
+        return screen
+      }
+    }
+    return null
+  }
+  const emitToPlugins = (event: string, data?: unknown): void => {
+    for (const screen of pluginScreens.values()) screen.emit(event, data)
+  }
+  addPluginViews()
+  if (pluginList.errors.length) {
+    toast(`${pluginList.errors.length} plugin problem(s). Run "Plugins: Show Load Problems" for details.`, 'error')
+  }
+
   if (!views[view]) view = 'explorer'
 
   const sash = h('div', { class: 'sash-v', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize sidebar' })
@@ -261,8 +330,9 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
   const activityButtons = new Map<string, HTMLButtonElement>()
   const gitCount = h('span', { class: 'count', style: 'display:none' })
   const activityTop = h('div', {})
-  for (const [id, v] of Object.entries(views)) {
-    const b = h('button', { class: 'activity', 'aria-label': v.label, title: v.label }, icon(v.icon, 24, 1.6))
+  function addActivityButton(id: string): void {
+    const v = views[id]
+    const b = h('button', { class: 'activity', 'aria-label': v.label, title: v.label }, v.iconEl ? v.iconEl() : icon(v.icon, 24, 1.6))
     if (id === 'git') b.append(gitCount)
     b.addEventListener('click', () => {
       if (view === id && sidebarOn) setSidebar(false)
@@ -271,6 +341,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     activityButtons.set(id, b)
     activityTop.append(b)
   }
+  for (const id of Object.keys(views)) addActivityButton(id)
   const devtools = h('button', { class: 'activity', 'aria-label': 'Developer tools', title: 'Developer tools (Ctrl+Shift+I)' }, icon('code', 22, 1.6))
   devtools.addEventListener('click', () => void neon.invoke('window:devtools'))
   const activitybar = h('div', { class: 'activitybar' }, activityTop, h('div', {}, devtools))
@@ -278,18 +349,50 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
   function setSidebar(on: boolean): void {
     sidebarOn = on
     sidebar.classList.toggle('hidden', !on)
+    syncPluginVisibility()
     renderActivity()
     saveLayout()
   }
 
   function showView(id: string, focus = true): void {
+    if (!views[id]) id = 'explorer'
     view = id
+    if (pluginViewIds.has(id)) mountPluginScreen(id)
     for (const [vid, v] of Object.entries(views)) v.el.classList.toggle('hidden', vid !== id)
     sidebarOn = true
     sidebar.classList.remove('hidden')
+    syncPluginVisibility()
     renderActivity()
     saveLayout()
     if (focus && id === 'search') search.focus()
+  }
+
+  /** Tells each loaded plugin screen whether it is on screen ("show" / "hide" events). */
+  function syncPluginVisibility(): void {
+    for (const [id, screen] of pluginScreens) screen.setVisible(sidebarOn && view === id)
+  }
+
+  /** Rescans the plugin folders and rebuilds the plugin screens in this window. */
+  async function reloadPlugins(): Promise<void> {
+    const wasShowing = pluginViewIds.has(view) ? view : null
+    for (const screen of pluginScreens.values()) screen.dispose()
+    pluginScreens.clear()
+    for (const id of pluginViewIds) {
+      views[id].el.remove()
+      activityButtons.get(id)?.remove()
+      activityButtons.delete(id)
+      delete views[id]
+    }
+    pluginViewIds.clear()
+    pluginList = ((await neon.invoke('plugins:reload').catch(() => emptyPlugins)) as PluginList) ?? emptyPlugins
+    addPluginViews()
+    for (const id of pluginViewIds) {
+      sidebar.insertBefore(views[id].el, sash)
+      addActivityButton(id)
+    }
+    const n = pluginList.plugins.length
+    toast(`Loaded ${n} plugin${n === 1 ? '' : 's'}${pluginList.errors.length ? `, ${pluginList.errors.length} with problems` : ''}`, pluginList.errors.length ? 'error' : 'info')
+    showView(wasShowing && views[wasShowing] ? wasShowing : view, false)
   }
 
   function renderActivity(): void {
@@ -487,14 +590,22 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
   }, 400)
 
   // ---- events ----
+  let lastActiveFile: string | null = null
   editors.onChange = () => {
     renderStatus()
     saveLayout()
+    if (editors.activePath !== lastActiveFile) {
+      lastActiveFile = editors.activePath
+      emitToPlugins('active-file', { path: lastActiveFile })
+    }
   }
   editors.editor.onDidChangeCursorSelection(() => renderStatus())
   monaco.editor.onDidChangeMarkers(() => renderStatus())
 
-  host.on('fs.changed', ({ dirs }: { dirs: string[] }) => void explorer.refresh(dirs))
+  host.on('fs.changed', ({ dirs }: { dirs: string[] }) => {
+    void explorer.refresh(dirs)
+    emitToPlugins('files-changed', { dirs })
+  })
   const applyGit = (s: GitStatus): void => {
     git = s
     explorer.setGit(s)
@@ -505,7 +616,10 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     gitCount.style.display = changed ? '' : 'none'
     renderStatus()
   }
-  host.on('git.changed', applyGit)
+  host.on('git.changed', (s: GitStatus) => {
+    applyGit(s)
+    emitToPlugins('git-changed', s)
+  })
   neon.on('window:count', ({ index, count }: { index: number; count: number }) => {
     windowIndex = index
     windowCount = count
@@ -583,12 +697,43 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     { id: 'gotoLine', label: 'Editor: Go to Line…', keybinding: 'Ctrl+G', run: () => editors.editor.getAction('editor.action.gotoLine')?.run() },
     { id: 'symbol', label: 'Editor: Go to Symbol in File…', keybinding: 'Ctrl+Shift+O', run: () => editors.editor.getAction('editor.action.quickOutline')?.run() },
     { id: 'comment', label: 'Editor: Toggle Line Comment', keybinding: 'Ctrl+/', run: () => editors.editor.getAction('editor.action.commentLine')?.run() },
-    { id: 'devtools', label: 'Developer: Toggle Developer Tools', keybinding: 'Ctrl+Shift+I', run: () => void neon.invoke('window:devtools') }
+    { id: 'devtools', label: 'Developer: Toggle Developer Tools', keybinding: 'Ctrl+Shift+I', run: () => void neon.invoke('window:devtools') },
+    {
+      id: 'plugins.openFolder',
+      label: 'Plugins: Open Plugins Folder',
+      run: () => void neon.invoke('plugins:openFolder').catch((err) => toast(errorMessage(err), 'error'))
+    },
+    { id: 'plugins.reload', label: 'Plugins: Reload Plugins', run: () => void reloadPlugins() },
+    {
+      id: 'plugins.problems',
+      label: 'Plugins: Show Load Problems',
+      run: () =>
+        void modal({
+          title: 'Plugins',
+          message: [
+            `Loaded: ${pluginList.plugins.map((p) => `${p.name} ${p.version}`).join(', ') || 'none'}`,
+            '',
+            pluginList.errors.length ? `Problems:\n${pluginList.errors.join('\n')}` : 'No problems.',
+            '',
+            `Plugin folders:\n${pluginList.folders.join('\n')}`
+          ].join('\n'),
+          buttons: ['Close'],
+          mono: true
+        })
+    }
   ]
+
+  /** Built-in commands plus one "Open <screen>" command per plugin screen. */
+  function allCommands(): Command[] {
+    const opens: Command[] = pluginList.plugins.flatMap((p) =>
+      p.screens.map((s) => ({ id: `plugin.${p.id}.${s.id}`, label: `${p.name}: Open ${s.title}`, run: () => showView(pluginViewId(p, s)) }))
+    )
+    return [...commands, ...opens]
+  }
 
   async function palette(): Promise<void> {
     const chosen = await pick(
-      commands.map((c) => ({ label: c.label, keybinding: c.keybinding, value: c })),
+      allCommands().map((c) => ({ label: c.label, keybinding: c.keybinding, value: c })),
       { placeholder: 'Type a command' }
     )
     if (chosen) {

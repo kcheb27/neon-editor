@@ -38,6 +38,13 @@ npm run smoke     # drives the real app on a local and an SSH project; screensho
 | SSH workspaces | "Connect to SSH Host…" (welcome screen, Remote view, palette, or click the status bar). Reads `~/.ssh/config` (Host, HostName, User, Port, IdentityFile, ProxyJump with one hop, Include). Auth by ssh-agent (including the Windows OpenSSH agent), key files (asks for passphrases), keyboard-interactive and password. Host keys are checked against `known_hosts`: unknown keys show their fingerprint for approval, changed keys are refused. Explorer, editing, search, git status and terminals all run on the host, and all windows of the project share one connection. If the connection drops it reconnects with backoff without asking again, and unsaved edits stay in the editor |
 | Safety | Unsaved files survive closing a window while another window shows them; closing the last window asks to save; line endings and BOM are preserved |
 
+## Plugins
+
+Plugins add screens to the sidebar, written in HTML and JavaScript against a small `neon` API
+(files, search, git, editor, terminals, prompts, storage). They live in a plugins folder outside
+the app, so the Windows build stays a single exe. See [docs/PLUGINS.md](docs/PLUGINS.md) and the
+example in [examples/plugins/todo-board](examples/plugins/todo-board).
+
 ## Not built yet
 
 - **SSH, compared with the design doc.** There's no Rust agent yet, so SSH projects use the

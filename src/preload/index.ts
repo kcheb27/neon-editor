@@ -14,7 +14,12 @@ const INVOKE = new Set([
   'shell:reveal',
   'dialog:confirm',
   'clipboard:read',
-  'clipboard:write'
+  'clipboard:write',
+  'plugins:list',
+  'plugins:reload',
+  'plugins:openFolder',
+  'plugins:storageGet',
+  'plugins:storageSet'
 ])
 const SEND = new Set(['window:layout'])
 const LISTEN = new Set(['window:count'])

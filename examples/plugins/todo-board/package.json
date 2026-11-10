@@ -1,0 +1,12 @@
+{
+  "name": "todo-board",
+  "displayName": "TODO Board",
+  "version": "1.0.0",
+  "description": "Example Neon Editor plugin: a screen listing TODO/FIXME comments, plus saved shell commands you can run in a terminal.",
+  "neon": {
+    "apiVersion": 1,
+    "screens": [
+      { "id": "board", "title": "TODO Board", "icon": "icon.svg", "entry": "screen.html" }
+    ]
+  }
+}

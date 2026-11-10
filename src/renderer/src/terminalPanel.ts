@@ -263,6 +263,13 @@ export class BottomPanel {
     return tv
   }
 
+  /** Opens a terminal on `target` and types `command` into it, as if the user had (plugins use this). */
+  async runCommand(command: string, target = ''): Promise<void> {
+    const tv = await this.newTerminal(undefined, target)
+    if (!tv) throw new Error(`Could not start a terminal${target ? ` on ${target}` : ''}`)
+    if (command) this.ctx.host.notify('term.input', { id: tv.id, data: `${command}\r` })
+  }
+
   /** Shows a menu of machines a terminal can run on and calls `run` with the chosen target. */
   async pickTarget(x: number, y: number, verb: string, run: (target: string) => void): Promise<void> {
     const hosts = ((await neon.invoke('ssh:hosts').catch(() => [])) as SshHostEntry[]).filter((e) => e.alias !== this.ctx.sshHost)

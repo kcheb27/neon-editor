@@ -175,3 +175,7 @@ export function fileBadge(name: string): [string, string] {
 export const GIT_COLORS: Record<string, string> = {
   M: '#FFCB6B', A: '#A6F25C', U: '#A6F25C', D: '#FF5370', R: '#4FD6FF', C: '#FF5370'
 }
+
+export function isIconName(name: string): name is IconName {
+  return Object.prototype.hasOwnProperty.call(ICON_PATHS, name)
+}

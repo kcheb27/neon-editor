@@ -221,3 +221,9 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 .host-row .dot { width: 8px; height: 8px; border-radius: 4px; flex-shrink: 0; border: 1px solid var(--fg-muted); }
 .host-row .dot.on { background: var(--remote); border-color: var(--remote); }
 .host-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* plugin screens */
+.plugin-body { flex: 1; min-height: 0; display: flex; }
+.plugin-frame { flex: 1; width: 100%; border: 0; background: var(--bg-chrome); }
+.activity-letter { width: 24px; height: 24px; border: 1.6px solid currentColor; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+.activity img { display: block; }

@@ -107,3 +107,32 @@ export type WireMessage =
   | { t: 'res'; id: number; ok: true; r: unknown }
   | { t: 'res'; id: number; ok: false; e: string }
   | { t: 'evt'; m: string; a: unknown }
+
+// ---------- plugins ----------
+
+export interface PluginScreen {
+  /** Unique within its plugin. */
+  id: string
+  title: string
+  /** HTML file inside the plugin folder, e.g. "screen/index.html". */
+  entry: string
+  /** A built-in icon name, an .svg/.png file inside the plugin folder, or empty for a letter. */
+  icon: string
+}
+
+export interface PluginInfo {
+  /** From package.json "name"; also the host part of its neon-plugin:// URLs. */
+  id: string
+  name: string
+  version: string
+  dir: string
+  screens: PluginScreen[]
+}
+
+export interface PluginList {
+  plugins: PluginInfo[]
+  /** Plugins that could not be loaded, as human-readable messages. */
+  errors: string[]
+  /** Folders that are scanned, in order. The first is where "Open Plugins Folder" goes. */
+  folders: string[]
+}

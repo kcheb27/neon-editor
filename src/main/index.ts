@@ -10,6 +10,7 @@ import * as path from 'node:path'
 import { listHosts } from '../host/ssh/config'
 import type { SshHostEntry, WindowInit, WindowLayout } from '../shared/protocol'
 import { isRemoteId, makeRemoteId, workspaceLabel } from '../shared/workspaceId'
+import { handlePluginProtocol, listPlugins, pluginFolders, registerPluginScheme, scanPlugins, storageGet, storageSet } from './plugins'
 
 const labelOf = (folder: string): string => workspaceLabel(folder, (p) => path.basename(p) || p)
 
@@ -43,6 +44,8 @@ interface WinMeta {
 // Dev-only test hook: NEON_SMOKE=<script.cjs> drives the app and takes screenshots.
 const smokeScript = !app.isPackaged ? process.env.NEON_SMOKE : undefined
 if (smokeScript) app.setPath('userData', path.join(os.tmpdir(), `neon-smoke-${process.pid}`))
+
+registerPluginScheme() // must happen before the app is ready
 
 const workspaces = new Map<string, Workspace>()
 const meta = new Map<BrowserWindow, WinMeta>()
@@ -397,6 +400,20 @@ ipcMain.handle('dialog:confirm', async (event, opts: { message: string; detail?:
 
 ipcMain.handle('window:devtools', (event) => event.sender.toggleDevTools())
 
+// ---------- plugins ----------
+
+ipcMain.handle('plugins:list', () => listPlugins())
+ipcMain.handle('plugins:reload', () => scanPlugins())
+ipcMain.handle('plugins:openFolder', async () => {
+  const folder = pluginFolders()[0]
+  fs.mkdirSync(folder, { recursive: true })
+  const err = await shell.openPath(folder)
+  if (err) throw new Error(err)
+  return folder
+})
+ipcMain.handle('plugins:storageGet', (_event, id: string, key: string) => storageGet(String(id))[String(key)] ?? null)
+ipcMain.handle('plugins:storageSet', (_event, id: string, key: string, value: unknown) => storageSet(String(id), String(key), value))
+
 // ---------- app lifecycle ----------
 
 function folderFromArgv(): string | null {
@@ -429,6 +446,8 @@ app.on('activate', () => {
 
 void app.whenReady().then(async () => {
   loadState()
+  scanPlugins()
+  handlePluginProtocol()
   // The app draws its own menus in the title bar. macOS keeps the system menu for Cmd+Q, copy and paste.
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 

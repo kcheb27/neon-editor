@@ -12,6 +12,7 @@ import { LocalBackend, spawnLocalShell } from './localBackend.ts'
 import { RemoteBackend } from './remoteBackend.ts'
 import type { Prompter, PromptRequest } from './ssh/connection.ts'
 import { Terminals } from './terminals.ts'
+import { decodeText } from './textUtil.ts'
 
 const workspaceId = process.argv[2] ?? process.cwd()
 
@@ -121,6 +122,12 @@ const handlers: Record<string, Handler> = {
   'fs.rename': (_c, a) => backend.rename(a.from, a.to),
   'fs.trash': (_c, a) => backend.trash(a.path),
   'fs.list': () => backend.list(),
+  // Plain text access for plugins. Files open in an editor are reloaded by the file watcher.
+  'fs.readText': async (_c, a) => decodeText(await backend.readFile(a.path)).text,
+  'fs.writeText': async (_c, a) => {
+    await backend.writeFile(a.path, String(a.text))
+    await buffers.diskChanged(a.path) // don't wait for the watcher to show it in open editors
+  },
   'watch.acquire': (c, a) => backend.acquire(c, a.dir),
   'watch.release': (c, a) => backend.release(c, a.dir),
 

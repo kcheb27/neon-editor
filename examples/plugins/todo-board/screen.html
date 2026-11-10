@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!-- Gives this page window.neon (see docs/PLUGINS.md). -->
+    <script src="/_neon/api.js"></script>
+    <style>
+      h2 { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--neon-muted); margin: 14px 0 6px; }
+      .row { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 4px 6px; border-radius: 4px; }
+      .row:hover { background: var(--neon-bg-raised); }
+      .file { color: var(--neon-muted); font-size: 11px; }
+      .tag { font-family: var(--neon-mono); font-size: 11px; color: var(--neon-warning); margin-right: 6px; }
+      .tag.FIXME { color: var(--neon-error); }
+      .bar { display: flex; gap: 6px; align-items: center; }
+      .bar input { flex: 1; min-width: 0; }
+      .cmd { display: flex; gap: 4px; align-items: center; margin: 3px 0; }
+      .cmd code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .muted { color: var(--neon-muted); }
+    </style>
+  </head>
+  <body>
+    <div class="bar"><span id="count" class="muted">Scanning…</span><span style="flex:1"></span><button id="refresh">Refresh</button></div>
+    <h2>TODO / FIXME</h2>
+    <div id="todos"></div>
+
+    <h2>Saved commands</h2>
+    <div id="cmds"></div>
+    <div class="bar" style="margin-top:6px">
+      <input id="newCmd" placeholder="e.g. npm test" />
+      <button id="add">Add</button>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id)
+      const el = (tag, props = {}, ...kids) => {
+        const e = Object.assign(document.createElement(tag), props)
+        e.append(...kids)
+        return e
+      }
+
+      async function scan() {
+        $('count').textContent = 'Scanning…'
+        try {
+          const ws = await neon.workspace()
+          const r = await neon.search('\\b(TODO|FIXME)\\b', { regex: true, caseSensitive: true })
+          const rel = (p) => (p.startsWith(ws.root) ? p.slice(ws.root.length + 1) : p)
+          $('todos').replaceChildren(
+            ...r.matches.map((m) => {
+              const tag = /FIXME/.test(m.text) ? 'FIXME' : 'TODO'
+              const row = el('button', { className: 'row', title: m.path },
+                el('span', { className: 'tag ' + tag, textContent: tag }),
+                el('span', { textContent: m.text.trim().slice(0, 120) }),
+                el('div', { className: 'file', textContent: rel(m.path) + ':' + m.line }))
+              row.onclick = () => neon.editor.open(m.path, m.line, m.col)
+              return row
+            })
+          )
+          $('count').textContent = r.matches.length + ' found' + (r.truncated ? ' (first ' + r.matches.length + ')' : '')
+        } catch (err) {
+          $('count').textContent = 'Error: ' + err.message
+        }
+      }
+
+      async function renderCmds() {
+        const cmds = (await neon.storage.get('commands')) || []
+        $('cmds').replaceChildren(
+          ...(cmds.length ? cmds.map((c, i) => {
+            const run = el('button', { textContent: 'Run' })
+            run.onclick = () => neon.terminal.run(c)
+            const del = el('button', { textContent: '✕', title: 'Remove' })
+            del.onclick = async () => { cmds.splice(i, 1); await neon.storage.set('commands', cmds); renderCmds() }
+            return el('div', { className: 'cmd' }, el('code', { textContent: c, title: c }), run, del)
+          }) : [el('div', { className: 'muted', textContent: 'None yet.' })])
+        )
+      }
+
+      $('add').onclick = async () => {
+        const c = $('newCmd').value.trim()
+        if (!c) return
+        const cmds = (await neon.storage.get('commands')) || []
+        cmds.push(c)
+        await neon.storage.set('commands', cmds)
+        $('newCmd').value = ''
+        renderCmds()
+      }
+      $('newCmd').onkeydown = (e) => { if (e.key === 'Enter') $('add').click() }
+      $('refresh').onclick = scan
+
+      // Rescan when files change, at most every 2 seconds.
+      let timer = null
+      neon.on('files-changed', () => { clearTimeout(timer); timer = setTimeout(scan, 2000) })
+
+      neon.ready.then(() => { scan(); renderCmds() })
+    </script>
+  </body>
+</html>
