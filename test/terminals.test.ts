@@ -13,7 +13,7 @@ function fakeSpawner(shell: string, calls: string[]) {
 
 const owner = { send() {} }
 
-test('a local terminal in an SSH workspace uses the local shell and its own start folder', async () => {
+test('a terminal on another machine uses that machine\'s shell and its own start folder', async () => {
   const remoteCalls: string[] = []
   const localCalls: string[] = []
   const terms = new Terminals('/srv/project', fakeSpawner('bash', remoteCalls), false)
@@ -22,8 +22,8 @@ test('a local terminal in an SSH workspace uses the local shell and its own star
   assert.deepEqual(remote, { id: 1, shell: 'bash', cwd: '/srv/project' })
 
   const local = await terms.create(owner, undefined, 80, 24, { spawn: fakeSpawner('powershell', localCalls), windowsPaths: true })
-  assert.deepEqual(local, { id: 2, shell: 'powershell', cwd: '/home/powershell', local: true })
+  assert.deepEqual(local, { id: 2, shell: 'powershell', cwd: '/home/powershell' })
 
   assert.deepEqual(remoteCalls, ['/srv/project'])
-  assert.deepEqual(localCalls, [''], 'the workspace folder is an SSH path, so the local shell must not get it')
+  assert.deepEqual(localCalls, [''], 'the workspace folder belongs to another machine, so this shell must not get it')
 })

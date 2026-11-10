@@ -547,7 +547,8 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     { id: 'sidebar', label: 'View: Toggle Sidebar', keybinding: 'Ctrl+B', run: () => setSidebar(!sidebarOn) },
     { id: 'panel', label: 'View: Toggle Terminal Panel', keybinding: 'Ctrl+`', run: () => togglePanel() },
     { id: 'newTerminal', label: 'Terminal: New Terminal', keybinding: 'Ctrl+Shift+`', run: () => { togglePanel(true); void panel.newTerminal() } },
-    { id: 'newLocalTerminal', label: 'Terminal: New Local Terminal (this machine)', run: () => { togglePanel(true); void panel.newTerminal(undefined, true) } },
+    { id: 'newLocalTerminal', label: 'Terminal: New Local Terminal (this machine)', run: () => { togglePanel(true); void panel.newTerminal(undefined, 'local') } },
+    { id: 'newTerminalOn', label: 'Terminal: New Terminal on…', run: () => { togglePanel(true); void panel.pickTarget(Math.round(window.innerWidth / 2) - 120, 120, 'New terminal on', (t) => void panel.newTerminal(undefined, t)) } },
     {
       id: 'termTree',
       label: 'Terminal: Toggle File Tree',

@@ -38,8 +38,9 @@ export class Terminals {
   }
 
   /**
-   * Start a shell. `other` runs it somewhere other than the workspace's own machine (a local
-   * shell in an SSH workspace); it then starts in its own default folder, not the workspace's.
+   * Start a shell. `other` runs it somewhere other than the workspace's own machine (this
+   * machine from an SSH workspace, or another SSH host); it then starts in that machine's
+   * default folder, not the workspace's.
    */
   async create(
     owner: TermOwner,
@@ -66,7 +67,7 @@ export class Terminals {
     pty.onExit((exitCode) => {
       if (this.terms.delete(id)) term.owner.send('term.exit', { id, exitCode })
     })
-    return other ? { id, shell, cwd: actualCwd, local: true } : { id, shell, cwd: actualCwd }
+    return { id, shell, cwd: actualCwd }
   }
 
   input(id: number, data: string): void {

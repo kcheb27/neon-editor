@@ -2,11 +2,11 @@
 
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
-import type { GitStatus, TermCreated } from '../../shared/protocol'
+import type { GitStatus, SshHostEntry, TermCreated } from '../../shared/protocol'
 import { monaco, palette } from './monacoSetup'
 import { neon, type Host } from './rpc'
 import { FileTree } from './tree'
-import { errorMessage, showMenu, toast } from './ui'
+import { ask, errorMessage, showMenu, toast } from './ui'
 import { basename, dirname, h, icon, pathKey, relative, tildify } from './util'
 
 interface TermView {
@@ -22,8 +22,12 @@ interface TermView {
   remoteHost: string
   following: boolean
   exited: boolean
-  /** A shell on this machine in an SSH workspace. Its files are not the workspace's, so it has no tree. */
-  local: boolean
+  /**
+   * Where the shell runs when it is not the workspace's machine: "local" (this machine, from an
+   * SSH workspace) or an SSH host. Empty for the workspace's own machine. Such a shell's files
+   * are not the workspace's, so it has no file tree.
+   */
+  target: string
 }
 
 const XTERM_THEME = {
@@ -145,9 +149,13 @@ export class BottomPanel {
     else requestAnimationFrame(() => this.focus())
   }
 
-  /** Opens a shell. In an SSH workspace, `local` opens it on this machine instead of the SSH host. */
-  async newTerminal(cwd?: string, local = false): Promise<void> {
-    if (!this.ctx.sshHost) local = false
+  /**
+   * Opens a shell. `target` picks the machine: empty for the workspace's own, "local" for this
+   * machine, or an SSH host (config alias or user@host[:port]).
+   */
+  async newTerminal(cwd?: string, target = ''): Promise<TermView | null> {
+    if (target === 'local' && !this.ctx.sshHost) target = ''
+    if (target && target === this.ctx.sshHost) target = ''
     this.tab = 'terminal'
     const term = new Terminal({
       fontFamily: "'JetBrains Mono', Consolas, monospace",
@@ -172,12 +180,12 @@ export class BottomPanel {
 
     let created: TermCreated
     try {
-      created = await this.ctx.host.call<TermCreated>('term.create', { cwd: local ? '' : (cwd ?? this.ctx.root), cols: term.cols, rows: term.rows, local })
+      created = await this.ctx.host.call<TermCreated>('term.create', { cwd: target ? '' : (cwd ?? this.ctx.root), cols: term.cols, rows: term.rows, target })
     } catch (err) {
       el.remove()
       term.dispose()
-      toast(`Could not start a terminal: ${errorMessage(err)}`, 'error')
-      return
+      toast(`Could not start a terminal${target ? ` on ${target}` : ''}: ${errorMessage(err)}`, 'error')
+      return null
     }
 
     const tree = new FileTree(
@@ -202,7 +210,7 @@ export class BottomPanel {
       remoteHost: '',
       following: true,
       exited: false,
-      local: !!created.local
+      target: created.target ?? ''
     }
     this.terms.push(tv)
     term.onData((data) => {
@@ -250,7 +258,39 @@ export class BottomPanel {
         { label: 'Paste', run: () => { paste(); term.focus() } }
       ])
     })
-    if (!tv.local) void tree.setRoot(created.cwd)
+    if (!tv.target) void tree.setRoot(created.cwd)
+    this.select(tv)
+    return tv
+  }
+
+  /** Shows a menu of machines a terminal can run on and calls `run` with the chosen target. */
+  async pickTarget(x: number, y: number, verb: string, run: (target: string) => void): Promise<void> {
+    const hosts = ((await neon.invoke('ssh:hosts').catch(() => [])) as SshHostEntry[]).filter((e) => e.alias !== this.ctx.sshHost)
+    const entries = [
+      { label: `${verb} ${this.ctx.sshHost ? `${this.ctx.sshHost} (workspace)` : 'this machine (workspace)'}`, run: () => run('') },
+      ...(this.ctx.sshHost ? [{ label: `${verb} this machine (local)`, run: () => run('local') }] : []),
+      ...hosts.map((e) => ({ label: `${verb} ${e.alias} (SSH)`, run: () => run(e.alias) })),
+      {
+        label: `${verb} user@host… (SSH)`,
+        run: () =>
+          void ask('SSH host, e.g. user@example.com or user@example.com:2222').then((host) => {
+            if (host?.trim()) run(host.trim())
+          })
+      }
+    ]
+    showMenu(x, y, entries)
+  }
+
+  /** Replaces a terminal with a new one on another machine, in the same tab position. */
+  async switchTerminal(old: TermView, target: string): Promise<void> {
+    const tv = await this.newTerminal(undefined, target)
+    if (!tv) return // the old terminal stays if the new one could not start
+    const at = this.terms.indexOf(old)
+    if (at >= 0) {
+      this.terms.splice(this.terms.indexOf(tv), 1)
+      this.terms.splice(at, 0, tv)
+      this.kill(old)
+    }
     this.select(tv)
   }
 
@@ -286,7 +326,7 @@ export class BottomPanel {
     const tv = this.find(id)
     if (!tv) return
     tv.cwd = cwd
-    if (tv.local) {
+    if (tv.target) {
       if (tv === this.active) this.render()
       return
     }
@@ -315,12 +355,14 @@ export class BottomPanel {
       this.miniStatus.textContent = ''
       return
     }
-    if (tv.local) {
+    if (tv.target) {
+      const local = tv.target === 'local'
       this.miniHead.replaceChildren(
-        h('span', { class: 'host-badge local', text: 'local', title: 'Shell is on this machine, not the SSH host' }),
+        h('span', { class: `host-badge ${local ? 'local' : 'remote'}`, text: tv.target, title: local ? 'Shell is on this machine' : `Shell is on ${tv.target}` }),
         h('span', { class: 'mini-path', title: tv.cwd }, h('bdi', { text: tv.cwd }))
       )
-      this.miniStatus.textContent = `Local shell on this machine. The workspace stays on ${this.ctx.sshHost}.`
+      const where = this.ctx.sshHost || 'this machine'
+      this.miniStatus.textContent = `${local ? 'Shell on this machine' : `Shell on ${tv.target}`}. The workspace and file tree stay on ${where}.`
       this.miniStatus.classList.add('paused')
       tv.tree.el.style.display = 'none'
       return
@@ -423,8 +465,8 @@ export class BottomPanel {
     if (this.tab === 'terminal') {
       bar.push(h('span', { class: 'sep' }))
       for (const tv of this.terms) {
-        const name = tv.local
-          ? `${tv.shell} (local): ${basename(tv.cwd) || tv.cwd}`
+        const name = tv.target
+          ? `${tv.shell} @ ${tv.target}: ${basename(tv.cwd) || tv.cwd}`
           : tv.remoteHost
             ? `${tv.shell} @ ${tv.remoteHost}`
             : `${tv.shell}: ${basename(tv.cwd) || tv.cwd}`
@@ -433,25 +475,24 @@ export class BottomPanel {
           e.stopPropagation()
           this.kill(tv)
         })
-        const t = h('div', { class: `term-tab${tv === this.active ? ' on' : ''}`, title: tv.cwd }, h('span', { text: name }), kill)
+        const t = h('div', { class: `term-tab${tv === this.active ? ' on' : ''}`, title: `${tv.cwd}\nRight-click to switch machine` }, h('span', { text: name }), kill)
         t.addEventListener('click', () => this.select(tv))
+        t.addEventListener('contextmenu', (e) => {
+          e.preventDefault()
+          void this.pickTarget(e.clientX, e.clientY, 'Switch to', (target) => void this.switchTerminal(tv, target))
+        })
         bar.push(t)
       }
       const add = h('button', { class: 'icon-btn', 'aria-label': 'New terminal', title: 'New terminal (Ctrl+Shift+`)' }, icon('plus', 15, 2))
       add.addEventListener('click', () => void this.newTerminal())
       bar.push(add)
-      if (this.ctx.sshHost) {
-        // SSH workspace: also offer a shell on this machine. The workspace itself stays on SSH.
-        const kind = h('button', { class: 'icon-btn', 'aria-label': 'Choose terminal type', title: 'New SSH or local terminal' }, icon('down', 12, 2.2))
-        kind.addEventListener('click', () => {
-          const r = kind.getBoundingClientRect()
-          showMenu(r.left, r.bottom + 2, [
-            { label: `New Terminal on ${this.ctx.sshHost}`, run: () => void this.newTerminal() },
-            { label: 'New Local Terminal (this machine)', run: () => void this.newTerminal(undefined, true) }
-          ])
-        })
-        bar.push(kind)
-      }
+      // Choose where a new terminal runs: this machine, the workspace's host or another SSH host.
+      const kind = h('button', { class: 'icon-btn', 'aria-label': 'New terminal on…', title: 'New terminal on another machine' }, icon('down', 12, 2.2))
+      kind.addEventListener('click', () => {
+        const r = kind.getBoundingClientRect()
+        void this.pickTarget(r.left, r.bottom + 2, 'New terminal on', (target) => void this.newTerminal(undefined, target))
+      })
+      bar.push(kind)
     }
     bar.push(h('div', { style: 'flex:1' }))
     if (this.tab === 'terminal') {

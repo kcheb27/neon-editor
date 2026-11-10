@@ -4,7 +4,7 @@
 
 import type { MessagePortMain } from 'electron'
 import type { GitStatus, RemoteStatus, WireMessage } from '../shared/protocol'
-import { isRemoteId } from '../shared/workspaceId'
+import { isRemoteId, makeRemoteId, parseRemoteId } from '../shared/workspaceId'
 import type { Backend } from './backend.ts'
 import { BufferStore } from './buffers.ts'
 import { Git } from './git.ts'
@@ -140,13 +140,51 @@ const handlers: Record<string, Handler> = {
 
   'search.run': (_c, a) => backend.search(a),
 
-  'term.create': (c, a) =>
-    a.local && backend.remote
-      ? terminals.create(c, '', a.cols, a.rows, { spawn: spawnLocalShell, windowsPaths: process.platform === 'win32' })
-      : terminals.create(c, a.cwd, a.cols, a.rows),
+  'term.create': (c, a) => createTerminal(c, a),
   'term.input': (_c, a) => terminals.input(a.id, a.data),
   'term.resize': (_c, a) => terminals.resize(a.id, a.cols, a.rows),
   'term.kill': (_c, a) => terminals.kill(a.id)
+}
+
+// ---------- terminals on other machines ----------
+
+// A terminal can run somewhere other than the workspace: on this machine ("local") from an SSH
+// workspace, or on any SSH host. Each extra host gets one connection, made on first use.
+const workspaceSshHost = parseRemoteId(workspaceId)?.host ?? ''
+const otherHosts = new Map<string, RemoteBackend>()
+
+// Prompts for extra hosts go to a window as usual, but their connection state must not
+// replace the workspace's own in the status bar.
+const otherPrompter: Prompter = { ask: (req) => prompter.ask(req), status() {} }
+
+function otherHost(host: string): RemoteBackend {
+  let b = otherHosts.get(host)
+  if (!b) {
+    b = new RemoteBackend(makeRemoteId(host, '~'), otherPrompter)
+    otherHosts.set(host, b)
+  }
+  return b
+}
+
+async function createTerminal(c: Conn, a: { cwd?: string; cols: number; rows: number; target?: string }) {
+  const target = (a.target ?? '').trim()
+  const isWorkspace = !target || (target === 'local' ? !backend.remote : target === workspaceSshHost)
+  if (isWorkspace) return terminals.create(c, a.cwd, a.cols, a.rows)
+  if (target === 'local') {
+    const created = await terminals.create(c, '', a.cols, a.rows, { spawn: spawnLocalShell, windowsPaths: process.platform === 'win32' })
+    return { ...created, target }
+  }
+  const remote = otherHost(target)
+  try {
+    await remote.info() // connect (asking for a password or host key if needed)
+  } catch (err) {
+    // Never connected: forget it so the next attempt starts fresh and can ask again.
+    if (otherHosts.get(target) === remote) otherHosts.delete(target)
+    remote.dispose()
+    throw err
+  }
+  const created = await terminals.create(c, '', a.cols, a.rows, { spawn: (cwd, cols, rows) => remote.spawnShell(cwd, cols, rows), windowsPaths: false })
+  return { ...created, target }
 }
 
 function attach(port: MessagePortMain): void {
@@ -212,4 +250,5 @@ process.on('unhandledRejection', (err) => console.error('[host] unhandled reject
 process.on('exit', () => {
   terminals.dispose()
   backend.dispose()
+  for (const b of otherHosts.values()) b.dispose()
 })

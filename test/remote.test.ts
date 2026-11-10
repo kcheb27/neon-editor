@@ -208,6 +208,22 @@ test('a remote shell reports its folder after cd', async () => {
   assert.ok(await until(() => exited))
 })
 
+test('a terminal on another SSH host (no folder given) starts in its home folder', async () => {
+  // How the Workspace Host opens a terminal on a host other than the workspace's.
+  const b = backend(new TestPrompter(), '~')
+  const shell = await b.spawnShell('', 100, 30)
+  const parser = new CwdParser(false)
+  let cwd = ''
+  shell.pty.onData((d) => {
+    const r = parser.feed(d)
+    if (r) cwd = r.path
+  })
+  const expected = fs.realpathSync(home)
+  assert.ok(await until(() => cwd === expected || cwd === home), `expected ${home}; got "${cwd}"`)
+  assert.equal(shell.cwd, cwd)
+  shell.pty.write('exit\r')
+})
+
 test('polling notices files added on the host, even in the same second', async () => {
   const b = backend(new TestPrompter())
   const { root } = await b.info()

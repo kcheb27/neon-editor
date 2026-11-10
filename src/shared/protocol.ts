@@ -94,8 +94,11 @@ export interface TermCreated {
   id: number
   shell: string
   cwd: string
-  /** True for a shell on this machine opened from an SSH workspace. */
-  local?: boolean
+  /**
+   * Where the shell runs when that is not the workspace's machine: "local" (this machine,
+   * from an SSH workspace) or an SSH host. Absent for the workspace's own machine.
+   */
+  target?: string
 }
 
 // Wire format on the MessagePort between a window and the Workspace Host.
