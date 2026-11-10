@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!-- A full-size editor tab ("location": "editor" in package.json). -->
+    <script src="/_neon/api.js"></script>
+    <style>
+      body { padding: 24px 32px; }
+      h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+      .sub { color: var(--neon-muted); margin-bottom: 20px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+      .card { background: var(--neon-bg-raised); border: 1px solid var(--neon-border); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+      .card h2 { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--neon-muted); margin: 0 0 10px; }
+      .big { font-size: 28px; font-weight: 600; }
+      .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+      .row .label { width: 64px; font-family: var(--neon-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+      .row .track { flex: 1; height: 8px; border-radius: 4px; background: var(--neon-bg); }
+      .row .bar { height: 100%; border-radius: 4px; background: var(--neon-accent); }
+      .row .n { width: 48px; text-align: right; color: var(--neon-muted); font-variant-numeric: tabular-nums; }
+      .file { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 3px 4px; border-radius: 4px;
+        font-family: var(--neon-mono); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .file:hover { background: var(--neon-bg); }
+      .code { display: inline-block; width: 16px; color: var(--neon-warning); }
+      .muted { color: var(--neon-muted); }
+    </style>
+  </head>
+  <body>
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <h1 id="title">Project Overview</h1>
+      <span style="flex:1"></span>
+      <button id="refresh">Refresh</button>
+    </div>
+    <div class="sub" id="sub">Loading…</div>
+    <div class="grid">
+      <div class="card"><h2>Files</h2><div class="big" id="files">–</div><div class="muted" id="filesNote"></div></div>
+      <div class="card"><h2>TODO / FIXME</h2><div class="big" id="todos">–</div><div class="muted">Open the TODO Board in the sidebar for the list</div></div>
+      <div class="card"><h2>Git</h2><div class="big" id="branch">–</div><div class="muted" id="gitNote"></div></div>
+      <div class="card"><h2>Files by type</h2><div id="types"></div></div>
+      <div class="card" style="grid-column: span 2"><h2>Changed files</h2><div id="changed" class="muted">–</div></div>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id)
+      const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e }
+
+      async function load() {
+        const ws = await neon.workspace()
+        $('title').textContent = ws.label
+        $('sub').textContent = (ws.remote ? 'SSH · ' + ws.sshHost + ' · ' : '') + ws.root
+        const rel = (p) => (p.startsWith(ws.root) ? p.slice(ws.root.length + 1) : p)
+
+        const [files, git, todos] = await Promise.all([
+          neon.fs.list(),
+          neon.git.status().catch(() => null),
+          neon.search('\\b(TODO|FIXME)\\b', { regex: true, caseSensitive: true }).catch(() => null)
+        ])
+
+        $('files').textContent = files.length.toLocaleString()
+        $('filesNote').textContent = 'not counting git-ignored files'
+        $('todos').textContent = todos ? todos.matches.length + (todos.truncated ? '+' : '') : '?'
+
+        const counts = new Map()
+        for (const f of files) {
+          const name = f.split(/[\\/]/).pop()
+          const dot = name.lastIndexOf('.')
+          const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '(none)'
+          counts.set(ext, (counts.get(ext) || 0) + 1)
+        }
+        const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 8)
+        const max = top.length ? top[0][1] : 1
+        $('types').replaceChildren(...top.map(([ext, n]) =>
+          el('div', { className: 'row' },
+            el('span', { className: 'label', textContent: ext, title: ext }),
+            el('span', { className: 'track' }, el('div', { className: 'bar', style: 'width:' + Math.max(2, (n / max) * 100) + '%' })),
+            el('span', { className: 'n', textContent: n }))))
+
+        if (!git || !git.repo) {
+          $('branch').textContent = 'No repo'
+          $('gitNote').textContent = ''
+          $('changed').textContent = 'Not a git repository.'
+          return
+        }
+        $('branch').textContent = git.branch || '(detached)'
+        const changed = Object.entries(git.files).filter(([, c]) => c !== '!')
+        $('gitNote').textContent = changed.length + ' changed' + (git.ahead ? ' · ' + git.ahead + ' ahead' : '') + (git.behind ? ' · ' + git.behind + ' behind' : '')
+        $('changed').replaceChildren(...(changed.length
+          ? changed.slice(0, 200).map(([p, c]) => {
+              const b = el('button', { className: 'file', title: p }, el('span', { className: 'code', textContent: c }), rel(p))
+              b.onclick = () => neon.editor.open(p)
+              return b
+            })
+          : [el('span', { textContent: 'No changes.' })]))
+      }
+
+      const refresh = () => load().catch((err) => { $('sub').textContent = 'Error: ' + err.message })
+      $('refresh').onclick = refresh
+      neon.on('git-changed', refresh)
+      neon.on('show', refresh) // the tab came back into view
+      neon.ready.then(refresh)
+    </script>
+  </body>
+</html>

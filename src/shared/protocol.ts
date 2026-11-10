@@ -25,6 +25,9 @@ export interface WindowLayout {
   panelHeight: number
   expanded: string[]
   termTree: boolean
+  /** Open page tabs (plugin screens) by id, and the active one if a page tab is active. */
+  pages?: string[]
+  activePage?: string | null
 }
 
 /** What a window needs to know about its workspace once the Workspace Host is ready. */
@@ -118,6 +121,11 @@ export interface PluginScreen {
   entry: string
   /** A built-in icon name, an .svg/.png file inside the plugin folder, or empty for a letter. */
   icon: string
+  /**
+   * Where the screen opens by default: "sidebar" (a sidebar view, can also open as a tab) or
+   * "editor" (a full-size editor tab only).
+   */
+  location: 'sidebar' | 'editor'
 }
 
 export interface PluginInfo {

@@ -79,6 +79,8 @@ export const PLUGIN_API_JS = String.raw`(() => {
       confirm: (message, buttons) => call('ui.confirm', message, buttons)
     }),
     commands: Object.freeze({ run: (id) => call('commands.run', id), list: () => call('commands.list') }),
+    /** Open one of this plugin's screens: { location: 'sidebar' | 'editor' } (default: the screen's own). */
+    screens: Object.freeze({ open: (id, opts) => call('screens.open', id, opts || {}) }),
     storage: Object.freeze({
       get: (key) => call('storage.get', key),
       set: (key, value) => call('storage.set', key, value)

@@ -16,7 +16,7 @@ test('a valid manifest gives the plugin and its screens', () => {
     name: 'Demo Plugin',
     version: '1.2.3',
     dir,
-    screens: [{ id: 'main', title: 'Demo', entry: 'ui/index.html', icon: 'icon.svg' }]
+    screens: [{ location: 'sidebar', id: 'main', title: 'Demo', entry: 'ui/index.html', icon: 'icon.svg' }]
   })
 })
 
@@ -33,6 +33,7 @@ test('manifests that cannot load explain why', () => {
   assert.match(err(manifest({ apiVersion: 1, screens: [{ ...screen, entry: '../../evil.html' }] })), /inside the plugin folder/)
   assert.match(err(manifest({ apiVersion: 1, screens: [{ ...screen, entry: 'C:\\evil.html' }] })), /inside the plugin folder/)
   assert.match(err(manifest({ apiVersion: 1, screens: [{ ...screen, id: '' }] })), /id is missing/)
+  assert.match(err(manifest({ apiVersion: 1, screens: [{ ...screen, location: 'panel' }] })), /location must be/)
 })
 
 test('plugin files cannot be read from outside the plugin folder', () => {

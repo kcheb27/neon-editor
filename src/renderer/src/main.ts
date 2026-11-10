@@ -255,12 +255,16 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       el: h('div', { class: 'view' }, h('div', { class: 'section-title', text: 'Remote Explorer' }), remoteView.el)
     }
   }
-  // ---- plugin screens (sidebar views from plugin folders) ----
+  // ---- plugin screens (sidebar views and editor tabs from plugin folders) ----
   const emptyPlugins: PluginList = { plugins: [], errors: [], folders: [] }
   let pluginList = ((await neon.invoke('plugins:list').catch(() => emptyPlugins)) as PluginList) ?? emptyPlugins
-  /** Screens that have been shown at least once (their page is loaded), by view id. */
+  /** Sidebar screens that have been shown at least once (their page is loaded), by view id. */
   const pluginScreens = new Map<string, PluginScreenView>()
+  /** Screens open as editor tabs, by view id. A separate page from the sidebar one, if any. */
+  const pluginTabs = new Map<string, PluginScreenView>()
   const pluginViewIds = new Set<string>()
+  /** Activity bar buttons of editor-only screens (they open a tab), by view id. */
+  const pluginTabButtons = new Set<string>()
   const pluginBridge: PluginBridgeContext = {
     host,
     info,
@@ -270,7 +274,14 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       togglePanel(true)
       await panel.runCommand(command, target)
     },
-    commands: () => allCommands()
+    commands: () => allCommands(),
+    openScreen: (pluginId, screenId, location) => {
+      const id = `plugin:${pluginId}:${screenId}`
+      const found = findScreen(id)
+      if (!found) return
+      if ((location ?? found.s.location) === 'editor') openPluginTab(id)
+      else showView(id)
+    }
   }
   const pluginViewId = (p: PluginInfo, s: PluginScreen): string => `plugin:${p.id}:${s.id}`
   function pluginIcon(p: PluginInfo, s: PluginScreen): Element {
@@ -278,10 +289,41 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     if (/\.(svg|png)$/i.test(s.icon)) return h('img', { src: `neon-plugin://${p.id}/${s.icon}`, width: '24', height: '24', alt: '' })
     return h('span', { class: 'activity-letter', text: (s.title.trim()[0] ?? '?').toUpperCase() })
   }
+  function findScreen(id: string): { p: PluginInfo; s: PluginScreen } | null {
+    for (const p of pluginList.plugins) for (const s of p.screens) if (pluginViewId(p, s) === id) return { p, s }
+    return null
+  }
+  /** Opens a screen as a full-size editor tab (or switches to it if it is open). */
+  function openPluginTab(id: string): void {
+    if (editors.focusPage(id)) return
+    const found = findScreen(id)
+    if (!found) return
+    const { p, s } = found
+    const screen = new PluginScreenView(p, s, pluginBridge)
+    pluginTabs.set(id, screen)
+    editors.openPage({
+      id,
+      title: s.title,
+      detail: `${s.title} (${p.name} ${p.version})`,
+      icon: () => pluginIcon(p, s),
+      el: screen.el,
+      onVisible: (on) => screen.setVisible(on),
+      onClose: () => {
+        screen.dispose()
+        pluginTabs.delete(id)
+      }
+    })
+  }
   function addPluginViews(): void {
     for (const p of pluginList.plugins) {
       for (const s of p.screens) {
         const id = pluginViewId(p, s)
+        if (s.location === 'editor') {
+          pluginTabButtons.add(id) // no sidebar view: its activity button opens the tab
+          continue
+        }
+        const toTab = h('button', { class: 'icon-btn', 'aria-label': `Open ${s.title} in an editor tab`, title: 'Open in editor tab' }, icon('expand', 14, 2))
+        toTab.addEventListener('click', () => openPluginTab(id))
         const body = h('div', { class: 'plugin-body' })
         views[id] = {
           title: s.title,
@@ -291,7 +333,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
           el: h(
             'div',
             { class: 'view hidden', 'data-plugin': p.id },
-            h('div', { class: 'section-title' }, h('span', { class: 'grow', text: s.title, title: `${p.name} ${p.version}` })),
+            h('div', { class: 'section-title' }, h('span', { class: 'grow', text: s.title, title: `${p.name} ${p.version}` }), toTab),
             body
           )
         }
@@ -316,6 +358,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
   }
   const emitToPlugins = (event: string, data?: unknown): void => {
     for (const screen of pluginScreens.values()) screen.emit(event, data)
+    for (const screen of pluginTabs.values()) screen.emit(event, data)
   }
   addPluginViews()
   if (pluginList.errors.length) {
@@ -342,6 +385,16 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     activityTop.append(b)
   }
   for (const id of Object.keys(views)) addActivityButton(id)
+  function addTabButton(id: string): void {
+    const found = findScreen(id)
+    if (!found) return
+    const label = `${found.s.title} (${found.p.name})`
+    const b = h('button', { class: 'activity', 'aria-label': label, title: label }, pluginIcon(found.p, found.s))
+    b.addEventListener('click', () => openPluginTab(id))
+    activityButtons.set(id, b)
+    activityTop.append(b)
+  }
+  for (const id of pluginTabButtons) addTabButton(id)
   const devtools = h('button', { class: 'activity', 'aria-label': 'Developer tools', title: 'Developer tools (Ctrl+Shift+I)' }, icon('code', 22, 1.6))
   devtools.addEventListener('click', () => void neon.invoke('window:devtools'))
   const activitybar = h('div', { class: 'activitybar' }, activityTop, h('div', {}, devtools))
@@ -375,21 +428,29 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
   /** Rescans the plugin folders and rebuilds the plugin screens in this window. */
   async function reloadPlugins(): Promise<void> {
     const wasShowing = pluginViewIds.has(view) ? view : null
+    const openTabs = editors.pageIds.filter((id) => pluginTabs.has(id))
+    const activeTab = editors.activePageId
+    for (const id of openTabs) editors.closePage(id)
     for (const screen of pluginScreens.values()) screen.dispose()
     pluginScreens.clear()
-    for (const id of pluginViewIds) {
-      views[id].el.remove()
+    for (const id of [...pluginViewIds, ...pluginTabButtons]) {
+      views[id]?.el.remove()
       activityButtons.get(id)?.remove()
       activityButtons.delete(id)
       delete views[id]
     }
     pluginViewIds.clear()
+    pluginTabButtons.clear()
     pluginList = ((await neon.invoke('plugins:reload').catch(() => emptyPlugins)) as PluginList) ?? emptyPlugins
     addPluginViews()
     for (const id of pluginViewIds) {
       sidebar.insertBefore(views[id].el, sash)
       addActivityButton(id)
     }
+    for (const id of pluginTabButtons) addTabButton(id)
+    // Reopen the tabs whose screens still exist (with fresh pages), keeping the active one.
+    for (const id of openTabs) if (findScreen(id)) openPluginTab(id)
+    if (activeTab) editors.focusPage(activeTab)
     const n = pluginList.plugins.length
     toast(`Loaded ${n} plugin${n === 1 ? '' : 's'}${pluginList.errors.length ? `, ${pluginList.errors.length} with problems` : ''}`, pluginList.errors.length ? 'error' : 'info')
     showView(wasShowing && views[wasShowing] ? wasShowing : view, false)
@@ -584,7 +645,9 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       panel: !panel.el.classList.contains('hidden'),
       panelHeight: panel.el.getBoundingClientRect().height || saved.panelHeight,
       expanded: explorer.getExpanded(),
-      termTree: panel.treeVisible
+      termTree: panel.treeVisible,
+      pages: editors.pageIds,
+      activePage: editors.activePageId
     }
     neon.send('window:layout', layout)
   }, 400)
@@ -653,7 +716,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     { id: 'quickOpen', label: 'Go to File…', keybinding: 'Ctrl+P', run: () => void quickOpen() },
     { id: 'save', label: 'File: Save', keybinding: 'Ctrl+S', run: () => void editors.save() },
     { id: 'saveAll', label: 'File: Save All', keybinding: 'Ctrl+Alt+S', run: () => void editors.saveAll() },
-    { id: 'close', label: 'View: Close Editor', keybinding: 'Ctrl+W', run: () => editors.activePath && void editors.close(editors.activePath) },
+    { id: 'close', label: 'View: Close Editor', keybinding: 'Ctrl+W', run: () => closeActiveTab() },
     { id: 'newWindow', label: 'Window: New Window for This Project', keybinding: 'Ctrl+Shift+N', run: () => void neon.invoke('window:new') },
     { id: 'openFolder', label: 'File: Open Folder…', keybinding: 'Ctrl+O', run: () => void neon.invoke('workspace:pick') },
     { id: 'connect', label: 'Remote: Connect to SSH Host…', run: () => void connectToHost() },
@@ -723,10 +786,21 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     }
   ]
 
-  /** Built-in commands plus one "Open <screen>" command per plugin screen. */
+  function closeActiveTab(): void {
+    const page = editors.activePageId
+    if (page) editors.closePage(page)
+    else if (editors.activePath) void editors.close(editors.activePath)
+  }
+
+  /** Built-in commands plus "Open <screen>" commands for plugin screens. */
   function allCommands(): Command[] {
     const opens: Command[] = pluginList.plugins.flatMap((p) =>
-      p.screens.map((s) => ({ id: `plugin.${p.id}.${s.id}`, label: `${p.name}: Open ${s.title}`, run: () => showView(pluginViewId(p, s)) }))
+      p.screens.flatMap((s) => {
+        const id = pluginViewId(p, s)
+        const tab: Command = { id: `plugin.${p.id}.${s.id}.tab`, label: `${p.name}: Open ${s.title} in Editor Tab`, run: () => openPluginTab(id) }
+        if (s.location === 'editor') return [{ ...tab, id: `plugin.${p.id}.${s.id}`, label: `${p.name}: Open ${s.title}` }]
+        return [{ id: `plugin.${p.id}.${s.id}`, label: `${p.name}: Open ${s.title}`, run: () => showView(id) }, tab]
+      })
     )
     return [...commands, ...opens]
   }
@@ -755,7 +829,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       else if (!shift && !alt && k === 'p') run = () => void quickOpen()
       else if (!shift && !alt && k === 's') run = () => void editors.save()
       else if (!shift && alt && k === 's') run = () => void editors.saveAll()
-      else if (!shift && !alt && k === 'w') run = () => editors.activePath && void editors.close(editors.activePath)
+      else if (!shift && !alt && k === 'w') run = () => closeActiveTab()
       else if (shift && k === 'n') run = () => void neon.invoke('window:new')
       else if (!shift && k === 'o') run = () => void neon.invoke('workspace:pick')
       else if (!shift && k === 'b') run = () => setSidebar(!sidebarOn)
@@ -781,7 +855,10 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     .then(applyGit)
     .catch(() => applyGit({ repo: false, branch: '', ahead: 0, behind: 0, files: {} }))
   for (const p of saved.tabs) await editors.open(p)
-  if (saved.active) await editors.open(saved.active)
+  for (const id of saved.pages ?? []) if (findScreen(id)) openPluginTab(id)
+  if (saved.activePage && editors.focusPage(saved.activePage)) {
+    // a plugin tab was active
+  } else if (saved.active) await editors.open(saved.active)
   if (saved.panel) panel.showTerminal()
   renderStatus()
 }

@@ -232,3 +232,10 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 .workbench, .welcome, .connecting { animation: app-in 0.18s ease-out; }
 @keyframes app-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .workbench, .welcome, .connecting { animation: none; } }
+
+/* page tabs: full-size pages (plugin screens) shown over the editor */
+.page-host { position: absolute; inset: 0; z-index: 3; display: flex; background: var(--bg-editor); }
+.page-host > * { flex: 1; min-width: 0; }
+.tab .page-icon { display: inline-flex; color: var(--accent); }
+.tab .page-icon svg, .tab .page-icon img { width: 14px; height: 14px; }
+.tab .page-icon .activity-letter { width: 14px; height: 14px; font-size: 9px; border-width: 1.2px; border-radius: 3px; }

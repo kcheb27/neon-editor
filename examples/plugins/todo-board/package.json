@@ -2,11 +2,23 @@
   "name": "todo-board",
   "displayName": "TODO Board",
   "version": "1.0.0",
-  "description": "Example Neon Editor plugin: a screen listing TODO/FIXME comments, plus saved shell commands you can run in a terminal.",
+  "description": "Example Neon Editor plugin: a sidebar screen listing TODO/FIXME comments with saved shell commands, and a full-size Project Overview editor tab.",
   "neon": {
     "apiVersion": 1,
     "screens": [
-      { "id": "board", "title": "TODO Board", "icon": "icon.svg", "entry": "screen.html" }
+      {
+        "id": "board",
+        "title": "TODO Board",
+        "icon": "icon.svg",
+        "entry": "screen.html"
+      },
+      {
+        "id": "overview",
+        "title": "Project Overview",
+        "icon": "overview.svg",
+        "entry": "overview.html",
+        "location": "editor"
+      }
     ]
   }
 }

@@ -37,7 +37,12 @@ export function parseManifest(json: unknown, dir: string): { plugin: PluginInfo 
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(sid)) return { error: `${id}: screens[${i}].id is missing or invalid` }
     if (!entry) return { error: `${id}: screens[${i}].entry must be a relative path inside the plugin folder` }
     const icon = typeof s.icon === 'string' ? s.icon : ''
+    const location = s.location ?? 'sidebar'
+    if (location !== 'sidebar' && location !== 'editor') {
+      return { error: `${id}: screens[${i}].location must be "sidebar" or "editor"` }
+    }
     screens.push({
+      location,
       id: sid,
       title: typeof s.title === 'string' && s.title ? s.title : sid,
       entry,

@@ -1,7 +1,9 @@
 # Plugins
 
-A plugin adds **screens** to Neon Editor: pages in the sidebar, each with its own icon in the
-activity bar and an "Open" command in the command palette (Ctrl+Shift+P). A screen is plain
+A plugin adds **screens** to Neon Editor. A screen is either a sidebar view or a full-size
+editor tab (next to your files), with its own icon in the activity bar and "Open" commands in the
+command palette (Ctrl+Shift+P). Any sidebar screen can also be opened as an editor tab, from the
+expand button in its header. A screen is plain
 HTML, CSS and JavaScript, and works with the workspace through the `neon` API, whether the
 workspace is local or over SSH.
 
@@ -39,7 +41,8 @@ my-plugin/
   "neon": {
     "apiVersion": 1,
     "screens": [
-      { "id": "main", "title": "My Screen", "icon": "icon.svg", "entry": "screen.html" }
+      { "id": "main", "title": "My Screen", "icon": "icon.svg", "entry": "screen.html" },
+      { "id": "report", "title": "My Report", "entry": "report.html", "location": "editor" }
     ]
   }
 }
@@ -48,6 +51,8 @@ my-plugin/
 - `name`: lowercase letters, digits and dashes. It is the plugin's id.
 - `neon.apiVersion`: must be `1` for this version of the app.
 - `screens[].entry`: an HTML file inside the plugin folder.
+- `screens[].location`: `"sidebar"` (default) for a sidebar view, or `"editor"` for a full-size
+  editor tab. Editor tabs that were open are reopened when the window is.
 - `screens[].icon`: an `.svg` or `.png` in the plugin folder (24×24), a built-in icon name
   (`files`, `search`, `git`, `remote`, `code`, `folder`, `windows`, `split`, `refresh`), or
   leave it out to show the title's first letter.
@@ -64,9 +69,11 @@ my-plugin/
 </script>
 ```
 
-A complete example is in [`examples/plugins/todo-board`](../examples/plugins/todo-board): it
-lists TODO/FIXME comments (click to open) and keeps a list of shell commands you can run in a
-terminal. Copy the folder into your plugins folder to try it.
+A complete example is in [`examples/plugins/todo-board`](../examples/plugins/todo-board), with
+two screens: a sidebar **TODO Board** that lists TODO/FIXME comments (click to open) and keeps
+shell commands you can run in a terminal, and a full-size **Project Overview** editor tab with
+file counts by type, git status and changed files. Copy the folder into your plugins folder to
+try it.
 
 ## The `neon` API
 
@@ -89,6 +96,7 @@ Every call returns a Promise. Paths can be absolute, or relative to the workspac
 | `neon.ui.ask(prompt, initialValue?)` | Text input; resolves the text or `null` |
 | `neon.ui.confirm(message, buttons?)` | Resolves the label of the chosen button |
 | `neon.commands.list()` / `neon.commands.run(id)` | The command palette's commands |
+| `neon.screens.open(id, { location? })` | Opens another screen of this plugin, in the sidebar or as an editor tab (`'sidebar'` / `'editor'`; default: the screen's own) |
 | `neon.storage.get(key)` / `neon.storage.set(key, value)` | Small JSON storage for this plugin (1 MB). `set(key, null)` deletes |
 | `neon.on(event, fn)` | Subscribe; returns an unsubscribe function |
 
@@ -96,10 +104,13 @@ Events for `neon.on`:
 
 | Event | Data |
 |---|---|
-| `show` / `hide` | The screen became visible / hidden |
+| `show` / `hide` | The screen became visible / hidden (sidebar view shown, or its tab selected) |
 | `files-changed` | `{ dirs }`: folders whose contents changed |
 | `git-changed` | The new git status |
-| `active-file` | `{ path }`: the active editor tab changed |
+| `active-file` | `{ path }`: the active editor tab changed (`null` when no file tab is active) |
+
+A screen open in the sidebar and as an editor tab runs as two separate pages. Share state
+between them with `neon.storage`.
 
 ### Styling
 

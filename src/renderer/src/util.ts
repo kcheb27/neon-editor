@@ -48,7 +48,8 @@ const ICON_PATHS = {
   windows: 'M3 5h12v10H3z M9 9h12v10H9z',
   refresh: 'M20 11a8 8 0 1 0-2.3 5.7 M20 4v7h-7',
   code: 'M8 7l-5 5l5 5 M16 7l5 5l-5 5',
-  folder: 'M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z'
+  folder: 'M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z',
+  expand: 'M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5'
 } as const
 
 export type IconName = keyof typeof ICON_PATHS

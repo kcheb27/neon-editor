@@ -16,6 +16,8 @@ export interface PluginBridgeContext {
   activeFile(): string | null
   /** Opens a terminal (on `target`, see BottomPanel.newTerminal) and types `command` into it. */
   runInTerminal(command: string, target: string): Promise<void>
+  /** Opens one of the plugin's own screens, in the sidebar or as an editor tab. */
+  openScreen(pluginId: string, screenId: string, location?: 'sidebar' | 'editor'): void
   /** The workbench's commands, for commands.run / commands.list. */
   commands(): { id: string; label: string; run(): void }[]
 }
@@ -124,6 +126,12 @@ export class PluginScreenView {
       const labels = Array.isArray(buttons) && buttons.length ? buttons.map(String) : ['OK', 'Cancel']
       const r = await modal({ title: this.plugin.name, message: String(message ?? ''), buttons: labels })
       return labels[r.button] ?? null
+    },
+    'screens.open': (screenId, opts) => {
+      const s = this.plugin.screens.find((x) => x.id === screenId)
+      if (!s) throw new Error(`${this.plugin.name} has no screen "${String(screenId)}"`)
+      const location = opts?.location === 'editor' || opts?.location === 'sidebar' ? opts.location : undefined
+      this.ctx.openScreen(this.plugin.id, s.id, location)
     },
     'commands.list': () => this.ctx.commands().map(({ id, label }) => ({ id, label })),
     'commands.run': (cmdId) => {

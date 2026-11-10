@@ -31,14 +31,38 @@ function languageFor(path: string): string {
   return 'plaintext'
 }
 
+/**
+ * A tab that is not a file: a full-size page (e.g. a plugin screen) shown over the editor.
+ * Its element stays in the DOM while the tab is open, so switching tabs keeps its state.
+ */
+export interface PageTab {
+  /** Unique among page tabs. */
+  id: string
+  title: string
+  /** Tooltip, e.g. which plugin it comes from. */
+  detail?: string
+  icon(): Element
+  el: HTMLElement
+  /** The tab became the visible one, or stopped being it. */
+  onVisible?(visible: boolean): void
+  /** The tab was closed; release what it holds. */
+  onClose?(): void
+}
+
+// Page tabs share the tab order with file paths; this prefix cannot start a real path.
+const PAGE = '\u0000page:'
+const isPageKey = (k: string): boolean => k.startsWith(PAGE)
+
 export class EditorArea {
   readonly el: HTMLElement
   readonly editor: monaco.editor.IStandaloneCodeEditor
   private host: Host
   private root: string
   private files = new Map<string, OpenFile>() // key -> file
-  private order: string[] = [] // paths, in tab order
-  private active: string | null = null
+  private order: string[] = [] // file paths and PAGE+id keys, in tab order
+  private active: string | null = null // a file path or a PAGE+id key
+  private pages = new Map<string, PageTab>() // PAGE+id -> page
+  private pageHost: HTMLElement
   private tabsEl: HTMLElement
   private crumbsEl: HTMLElement
   private emptyEl: HTMLElement
@@ -71,17 +95,19 @@ export class EditorArea {
         h('kbd', { text: 'Ctrl+Shift+N' })
       )
     )
-    editorHost.append(this.emptyEl)
+    this.pageHost = h('div', { class: 'page-host' })
+    this.pageHost.style.display = 'none'
+    editorHost.append(this.emptyEl, this.pageHost)
     this.el = h('div', { style: 'flex:1;min-height:0;display:flex;flex-direction:column' }, this.tabsEl, this.crumbsEl, editorHost)
     this.editor = createEditor(editorHost)
 
     // Undo and redo go to the shared undo stack in the Workspace Host, so they undo the
     // latest edit to this file no matter which window made it.
     const undo = (): void => {
-      if (this.active) this.host.notify('buf.undo', { path: this.active })
+      if (this.activePath) this.host.notify('buf.undo', { path: this.activePath })
     }
     const redo = (): void => {
-      if (this.active) this.host.notify('buf.redo', { path: this.active })
+      if (this.activePath) this.host.notify('buf.redo', { path: this.activePath })
     }
     this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, undo)
     this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, redo)
@@ -101,12 +127,106 @@ export class EditorArea {
     this.render()
   }
 
+  /** The active file, or null when no file tab (or a page tab) is active. */
   get activePath(): string | null {
-    return this.active
+    return this.active && !isPageKey(this.active) ? this.active : null
   }
 
+  /** Open files, in tab order. */
   get paths(): string[] {
-    return [...this.order]
+    return this.order.filter((k) => !isPageKey(k))
+  }
+
+  /** Ids of open page tabs, in tab order. */
+  get pageIds(): string[] {
+    return this.order.filter(isPageKey).map((k) => k.slice(PAGE.length))
+  }
+
+  /** The active page tab's id, or null. */
+  get activePageId(): string | null {
+    return this.active && isPageKey(this.active) ? this.active.slice(PAGE.length) : null
+  }
+
+  hasPage(id: string): boolean {
+    return this.pages.has(PAGE + id)
+  }
+
+  /** Shows a page tab, adding it after the active tab if it is not open yet. */
+  openPage(page: PageTab): void {
+    const key = PAGE + page.id
+    if (!this.pages.has(key)) {
+      this.pages.set(key, page)
+      page.el.style.display = 'none'
+      this.pageHost.append(page.el)
+      const at = this.active ? this.order.indexOf(this.active) + 1 : this.order.length
+      this.order.splice(at, 0, key)
+    }
+    this.showPage(key)
+  }
+
+  /** Shows an open page tab by id. Returns false if it is not open. */
+  focusPage(id: string): boolean {
+    if (!this.pages.has(PAGE + id)) return false
+    this.showPage(PAGE + id)
+    return true
+  }
+
+  private showPage(key: string): void {
+    const page = this.pages.get(key)!
+    if (this.active === key) return
+    this.leaveActive()
+    this.active = key
+    for (const [k, p] of this.pages) p.el.style.display = k === key ? '' : 'none'
+    this.pageHost.style.display = ''
+    page.onVisible?.(true)
+    this.render()
+    this.onChange()
+  }
+
+  /** Before switching tabs: remember the file's scroll/cursor, or hide the page. */
+  private leaveActive(): void {
+    if (!this.active) return
+    if (isPageKey(this.active)) {
+      const page = this.pages.get(this.active)
+      if (page) {
+        page.el.style.display = 'none'
+        page.onVisible?.(false)
+      }
+      this.pageHost.style.display = 'none'
+    } else {
+      const prev = this.files.get(pathKey(this.active))
+      if (prev) prev.view = this.editor.saveViewState()
+    }
+  }
+
+  closePage(id: string): void {
+    const key = PAGE + id
+    const page = this.pages.get(key)
+    if (!page) return
+    const index = this.order.indexOf(key)
+    const wasActive = this.active === key
+    if (wasActive) this.leaveActive()
+    this.order.splice(index, 1)
+    this.pages.delete(key)
+    page.el.remove()
+    page.onClose?.()
+    if (wasActive) {
+      this.active = null
+      const next = this.order[Math.min(index, this.order.length - 1)]
+      if (next) this.activate(next)
+      else this.editor.setModel(null)
+    }
+    this.render()
+    this.onChange()
+  }
+
+  /** Switches to a tab by its order key (file path or page key). */
+  private activate(key: string): void {
+    if (isPageKey(key)) this.showPage(key)
+    else {
+      const file = this.files.get(pathKey(key))
+      if (file) this.show(file)
+    }
   }
 
   isDirty(path: string): boolean {
@@ -152,7 +272,7 @@ export class EditorArea {
       if (!file) {
         file = loaded
         this.files.set(key, file)
-        const at = this.active ? this.order.findIndex((p) => samePath(p, this.active!)) + 1 : this.order.length
+        const at = this.active ? this.order.indexOf(this.active) + 1 : this.order.length
         this.order.splice(at, 0, path)
       }
     }
@@ -166,10 +286,7 @@ export class EditorArea {
   }
 
   private show(file: OpenFile): void {
-    if (this.active && !samePath(this.active, file.path)) {
-      const prev = this.files.get(pathKey(this.active))
-      if (prev) prev.view = this.editor.saveViewState()
-    }
+    if (this.active && (isPageKey(this.active) || !samePath(this.active, file.path))) this.leaveActive()
     this.active = file.path
     this.editor.setModel(file.model)
     if (file.view) this.editor.restoreViewState(file.view)
@@ -197,17 +314,17 @@ export class EditorArea {
         } else discard = true
       }
     }
-    const index = this.order.findIndex((p) => samePath(p, path))
+    const index = this.order.findIndex((p) => !isPageKey(p) && samePath(p, path))
     this.order.splice(index, 1)
     this.files.delete(key)
     this.host.notify('buf.close', { path, discard })
     file.binding.destroy()
     file.doc.destroy()
-    if (this.active && samePath(this.active, path)) {
+    if (this.activePath && samePath(this.activePath, path)) {
       this.active = null
+      this.editor.setModel(null)
       const next = this.order[Math.min(index, this.order.length - 1)]
-      if (next) this.show(this.files.get(pathKey(next))!)
-      else this.editor.setModel(null)
+      if (next) this.activate(next)
     }
     file.model.dispose()
     this.render()
@@ -215,7 +332,7 @@ export class EditorArea {
     return true
   }
 
-  async save(path = this.active ?? ''): Promise<boolean> {
+  async save(path = this.activePath ?? ''): Promise<boolean> {
     if (!path) return false
     try {
       await this.host.call('buf.save', { path })
@@ -236,14 +353,40 @@ export class EditorArea {
 
   cycle(step: number): void {
     if (this.order.length < 2 || !this.active) return
-    const i = this.order.findIndex((p) => samePath(p, this.active!))
-    const next = this.order[(i + step + this.order.length) % this.order.length]
-    void this.open(next)
+    const i = this.order.indexOf(this.active)
+    this.activate(this.order[(i + step + this.order.length) % this.order.length])
+  }
+
+  private pageTabEl(key: string): HTMLElement {
+    const page = this.pages.get(key)!
+    const on = this.active === key
+    const close = h(
+      'button',
+      { class: 'close', 'aria-label': `Close ${page.title}`, title: 'Close (Ctrl+W)' },
+      h('span', { class: 'x', style: 'display:flex' }, icon('close', 12, 2.4))
+    )
+    close.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.closePage(page.id)
+    })
+    const tab = h(
+      'div',
+      { class: `tab page${on ? ' on' : ''}`, role: 'tab', 'aria-selected': String(on), title: page.detail ?? page.title },
+      h('span', { class: 'page-icon' }, page.icon()),
+      h('span', { text: page.title }),
+      close
+    )
+    tab.addEventListener('click', () => this.showPage(key))
+    tab.addEventListener('auxclick', (e) => {
+      if (e.button === 1) this.closePage(page.id)
+    })
+    return tab
   }
 
   private render(): void {
     this.tabsEl.replaceChildren(
       ...this.order.map((p) => {
+        if (isPageKey(p)) return this.pageTabEl(p)
         const file = this.files.get(pathKey(p))!
         const on = !!this.active && samePath(p, this.active)
         const [badge, color] = fileBadge(basename(p))
@@ -273,7 +416,11 @@ export class EditorArea {
     )
     this.tabsEl.querySelector('.tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 
-    if (this.active) {
+    const page = this.active && isPageKey(this.active) ? this.pages.get(this.active) : null
+    if (page) {
+      this.crumbsEl.style.display = 'none'
+      this.emptyEl.style.display = 'none'
+    } else if (this.active) {
       const rel = relative(this.root, this.active)
       const parts = rel.split(/[\\/]/).filter(Boolean)
       const crumbs: (HTMLElement | string)[] = []
