@@ -65,6 +65,16 @@ interface QuickOptions<T> {
   /** Free text mode: Enter returns the typed text instead of an item. */
   freeText?: boolean
   max?: number
+  /**
+   * Items that depend on the typed text (e.g. the folder a typed path points into). Return null
+   * to use the fixed items; otherwise the items to show and the part of the text to match them on.
+   */
+  dynamic?: (query: string) => { items: PickItem<T>[] | Promise<PickItem<T>[]>; filter: string } | null
+  /**
+   * Called when an item is chosen (Enter, click, or Tab). Return new text to put in the box and
+   * stay open (e.g. to go into a folder), or null to finish with the item. Tab never finishes.
+   */
+  descend?: (item: PickItem<T>) => string | null
 }
 
 function quick<T>(items: PickItem<T>[], opts: QuickOptions<T>): Promise<PickItem<T> | string | null> {
@@ -98,7 +108,7 @@ function quick<T>(items: PickItem<T>[], opts: QuickOptions<T>): Promise<PickItem
       shown.forEach(({ item, hits }, i) => {
         const row = h(
           'button',
-          { class: `quick-item${i === index ? ' on' : ''}`, role: 'option', tabindex: '-1', onclick: () => finish(item) },
+          { class: `quick-item${i === index ? ' on' : ''}`, role: 'option', tabindex: '-1', onclick: () => choose(item) },
           highlight(item.label, hits),
           h('span', { class: 'desc', text: item.description ?? '' }),
           item.keybinding ? h('span', { class: 'kb', text: item.keybinding }) : null
@@ -114,11 +124,23 @@ function quick<T>(items: PickItem<T>[], opts: QuickOptions<T>): Promise<PickItem
       ;(list.children[index] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' })
     }
 
+    let request = 0
     const filter = (): void => {
-      const q = input.value.trim()
-      const matchOn = opts.matchOn ?? ((it: PickItem<T>) => it.label)
+      const dyn = opts.dynamic?.(input.value)
+      if (dyn) {
+        const mine = ++request
+        void Promise.resolve(dyn.items).then(
+          (found) => mine === request && apply(found, dyn.filter.trim(), (it) => it.label),
+          () => mine === request && apply([], '', (it) => it.label)
+        )
+        return
+      }
+      request++
+      apply(items, input.value.trim(), opts.matchOn ?? ((it: PickItem<T>) => it.label))
+    }
+    const apply = (source: PickItem<T>[], q: string, matchOn: (it: PickItem<T>) => string): void => {
       const scored: { item: PickItem<T>; hits: number[]; score: number }[] = []
-      for (const item of items) {
+      for (const item of source) {
         const text = matchOn(item)
         const m = fuzzy(q, text)
         if (!m) continue
@@ -132,6 +154,15 @@ function quick<T>(items: PickItem<T>[], opts: QuickOptions<T>): Promise<PickItem
       render()
     }
 
+    /** Choose an item: go into it (stay open with new text) or finish with it. */
+    const choose = (item: PickItem<T>, tab = false): void => {
+      const next = opts.descend?.(item) ?? null
+      if (next !== null) {
+        input.value = next
+        filter()
+      } else if (!tab) finish(item)
+    }
+
     input.addEventListener('input', filter)
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -140,7 +171,10 @@ function quick<T>(items: PickItem<T>[], opts: QuickOptions<T>): Promise<PickItem
       } else if (e.key === 'Enter') {
         e.preventDefault()
         if (opts.freeText) finish(input.value)
-        else if (shown[index]) finish(shown[index].item)
+        else if (shown[index]) choose(shown[index].item)
+      } else if (e.key === 'Tab' && opts.descend && shown[index]) {
+        e.preventDefault()
+        choose(shown[index].item, true)
       } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         if (!shown.length) return

@@ -10,7 +10,7 @@ import '@fontsource/jetbrains-mono/400-italic.css'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 
-import type { GitStatus, PluginInfo, PluginList, PluginScreen, RemoteStatus, SshHostEntry, WindowInit, WindowLayout, WorkspaceInfo } from '../../shared/protocol'
+import type { DirEntry, GitStatus, PluginInfo, PluginList, PluginScreen, RemoteStatus, SshHostEntry, WindowInit, WindowLayout, WorkspaceInfo } from '../../shared/protocol'
 import { parseRemoteId, workspaceLabel } from '../../shared/workspaceId'
 import { EditorArea } from './editorArea'
 import { monaco, setupMonaco } from './monacoSetup'
@@ -655,7 +655,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     'button',
     { title: 'Go to file (Ctrl+P)' },
     icon('search', 14, 2),
-    h('span', { text: `${label} — Search files` })
+    h('span', { text: `${label} — Search files, or type a path` })
   )
   commandCenter.addEventListener('click', () => void quickOpen())
   const windowChip = h('button', { class: 'window-chip', title: 'Open another window for this project (Ctrl+Shift+N)' }, icon('windows', 14, 2), h('span', { text: '' }))
@@ -768,10 +768,43 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       description: relative(root, dirname(f)),
       value: f
     }))
+    // Typing a path ("/", "~/", "C:\\") browses any folder on the project's machine (this one,
+    // or the SSH host): the project's file list covers only the project.
+    const dirCache = new Map<string, Promise<DirEntry[]>>()
+    const listDir = (dir: string): Promise<DirEntry[]> => {
+      let p = dirCache.get(dir)
+      if (!p) {
+        p = host.call<DirEntry[]>('fs.readdir', { path: dir })
+        dirCache.set(dir, p)
+      }
+      return p
+    }
     const chosen = await pick(items, {
-      placeholder: 'Search files by name',
-      matchOn: (item) => relative(root, item.value),
-      max: 100
+      placeholder: 'Search project files by name, or type a path (/  ~/  C:\\) to browse the whole machine',
+      matchOn: (item) => (item.value.endsWith('/') || item.value.endsWith('\\') ? item.label : relative(root, item.value)),
+      max: 200,
+      dynamic: (query) => {
+        if (!/^(\/|~([\\/]|$)|[a-zA-Z]:[\\/]|\\\\)/.test(query)) return null
+        const expanded = query.startsWith('~') ? info.home + query.slice(1) : query
+        const cut = Math.max(expanded.lastIndexOf('/'), expanded.lastIndexOf('\\'))
+        if (cut < 0) return { items: [], filter: '' }
+        const dir = expanded.slice(0, cut + 1) // ends with a separator
+        const sep = expanded[cut]
+        // "/" and "C:\\" are folders as typed; others drop the trailing separator.
+        const readPath = /^([\\/]|[a-zA-Z]:[\\/])$/.test(dir) ? dir : dir.slice(0, -1)
+        return {
+          filter: expanded.slice(cut + 1),
+          items: listDir(readPath).then((entries) =>
+            entries.map((e) => ({
+              label: e.kind === 'dir' ? `${e.name}${sep}` : e.name,
+              description: e.kind === 'dir' ? 'folder' : '',
+              value: e.kind === 'dir' ? `${dir}${e.name}${sep}` : `${dir}${e.name}`
+            }))
+          )
+        }
+      },
+      // A folder: go into it. A file: open it.
+      descend: (item) => (/[\\/]$/.test(item.value) ? item.value : null)
     })
     if (chosen) openFile(chosen)
   }
