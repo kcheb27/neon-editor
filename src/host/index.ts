@@ -8,7 +8,7 @@ import { isRemoteId } from '../shared/workspaceId'
 import type { Backend } from './backend.ts'
 import { BufferStore } from './buffers.ts'
 import { Git } from './git.ts'
-import { LocalBackend } from './localBackend.ts'
+import { LocalBackend, spawnLocalShell } from './localBackend.ts'
 import { RemoteBackend } from './remoteBackend.ts'
 import type { Prompter, PromptRequest } from './ssh/connection.ts'
 import { Terminals } from './terminals.ts'
@@ -140,7 +140,10 @@ const handlers: Record<string, Handler> = {
 
   'search.run': (_c, a) => backend.search(a),
 
-  'term.create': (c, a) => terminals.create(c, a.cwd, a.cols, a.rows),
+  'term.create': (c, a) =>
+    a.local && backend.remote
+      ? terminals.create(c, '', a.cols, a.rows, { spawn: spawnLocalShell, windowsPaths: process.platform === 'win32' })
+      : terminals.create(c, a.cwd, a.cols, a.rows),
   'term.input': (_c, a) => terminals.input(a.id, a.data),
   'term.resize': (_c, a) => terminals.resize(a.id, a.cols, a.rows),
   'term.kill': (_c, a) => terminals.kill(a.id)

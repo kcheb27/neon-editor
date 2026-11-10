@@ -44,6 +44,30 @@ function shellCommand(): { file: string; args: string[]; env: Record<string, str
   return { file: shell, args: [], env }
 }
 
+/** Start a shell on this machine. Used by local workspaces, and for local terminals in SSH ones. */
+export async function spawnLocalShell(cwd: string, cols: number, rows: number): Promise<SpawnedShell> {
+  const { file, args, env } = shellCommand()
+  const start = cwd || os.homedir()
+  const proc = pty.spawn(file, args, {
+    name: 'xterm-256color',
+    cols,
+    rows,
+    cwd: start,
+    env: { ...process.env, ...env, TERM_PROGRAM: 'neon-editor' } as Record<string, string>
+  })
+  return {
+    shell: path.basename(file).replace(/\.exe$/i, ''),
+    cwd: start,
+    pty: {
+      onData: (cb) => void proc.onData(cb),
+      onExit: (cb) => void proc.onExit(({ exitCode }) => cb(exitCode)),
+      write: (d) => proc.write(d),
+      resize: (c, r) => proc.resize(c, r),
+      kill: () => proc.kill()
+    }
+  }
+}
+
 export class LocalBackend implements Backend {
   readonly remote = false
   readonly path: PathApi = path as unknown as PathApi
@@ -118,27 +142,8 @@ export class LocalBackend implements Backend {
     })
   }
 
-  async spawnShell(cwd: string, cols: number, rows: number): Promise<SpawnedShell> {
-    const { file, args, env } = shellCommand()
-    const start = cwd || this.root || os.homedir()
-    const proc = pty.spawn(file, args, {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: start,
-      env: { ...process.env, ...env, TERM_PROGRAM: 'neon-editor' } as Record<string, string>
-    })
-    return {
-      shell: path.basename(file).replace(/\.exe$/i, ''),
-      cwd: start,
-      pty: {
-        onData: (cb) => void proc.onData(cb),
-        onExit: (cb) => void proc.onExit(({ exitCode }) => cb(exitCode)),
-        write: (d) => proc.write(d),
-        resize: (c, r) => proc.resize(c, r),
-        kill: () => proc.kill()
-      }
-    }
+  spawnShell(cwd: string, cols: number, rows: number): Promise<SpawnedShell> {
+    return spawnLocalShell(cwd || this.root, cols, rows)
   }
 
   startWatching(events: FileEvents): void {

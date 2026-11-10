@@ -39,6 +39,7 @@ const ICON_PATHS = {
   git: 'M6 3v12 M18 9a3 3 0 1 0 0-6a3 3 0 0 0 0 6z M6 21a3 3 0 1 0 0-6a3 3 0 0 0 0 6z M18 9a9 9 0 0 1-9 9',
   remote: 'M3 4h18v12H3z M8 20h8 M12 16v4',
   chevron: 'M9 6l6 6l-6 6',
+  down: 'M6 9l6 6l6-6',
   close: 'M6 6l12 12 M18 6L6 18',
   plus: 'M12 5v14 M5 12h14',
   trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13',

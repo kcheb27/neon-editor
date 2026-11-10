@@ -37,11 +37,22 @@ export class Terminals {
     this.defaultCwd = cwd
   }
 
-  async create(owner: TermOwner, cwd: string | undefined, cols: number, rows: number): Promise<TermCreated> {
-    const startDir = cwd || this.defaultCwd
-    const { pty, shell, cwd: actualCwd } = await this.spawn(startDir, Math.max(cols, 20), Math.max(rows, 5))
+  /**
+   * Start a shell. `other` runs it somewhere other than the workspace's own machine (a local
+   * shell in an SSH workspace); it then starts in its own default folder, not the workspace's.
+   */
+  async create(
+    owner: TermOwner,
+    cwd: string | undefined,
+    cols: number,
+    rows: number,
+    other?: { spawn: ShellSpawner; windowsPaths: boolean }
+  ): Promise<TermCreated> {
+    const spawn = other?.spawn ?? this.spawn
+    const startDir = cwd || (other ? '' : this.defaultCwd)
+    const { pty, shell, cwd: actualCwd } = await spawn(startDir, Math.max(cols, 20), Math.max(rows, 5))
     const id = this.nextId++
-    const term: Term = { id, proc: pty, owner, cwd: actualCwd, parser: new CwdParser(this.windowsPaths) }
+    const term: Term = { id, proc: pty, owner, cwd: actualCwd, parser: new CwdParser(other?.windowsPaths ?? this.windowsPaths) }
     this.terms.set(id, term)
 
     pty.onData((data) => {
@@ -55,7 +66,7 @@ export class Terminals {
     pty.onExit((exitCode) => {
       if (this.terms.delete(id)) term.owner.send('term.exit', { id, exitCode })
     })
-    return { id, shell, cwd: actualCwd }
+    return other ? { id, shell, cwd: actualCwd, local: true } : { id, shell, cwd: actualCwd }
   }
 
   input(id: number, data: string): void {
