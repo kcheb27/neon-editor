@@ -1,0 +1,16 @@
+<!doctype html>
+<!-- Source of build/splash.bmp, shown while the portable exe unpacks (before the app starts).
+     Regenerate with: node scripts/make-splash.cjs -->
+<html><head><meta charset="utf-8"><style>
+  html, body { margin: 0; width: 480px; height: 270px; background: #10121a; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    color: #e4e7f2; font: 13px/1.4 'Segoe UI', Inter, system-ui, sans-serif; border: 1px solid #2a3350; box-sizing: border-box; }
+  .title { font-size: 30px; font-weight: 300; }
+  .title b { font-weight: 700; background: linear-gradient(90deg, #7c5cff, #4fd6ff, #ff5fa2); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .bar { width: 200px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, #1c1f2b, #7c5cff, #4fd6ff, #1c1f2b); }
+  .note { color: #8a93b0; font-size: 12px; }
+</style></head><body>
+  <div class="title">Neon <b>Editor</b></div>
+  <div class="bar"></div>
+  <div class="note">Starting up…</div>
+</body></html>

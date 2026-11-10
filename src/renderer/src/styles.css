@@ -227,3 +227,8 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 .plugin-frame { flex: 1; width: 100%; border: 0; background: var(--bg-chrome); }
 .activity-letter { width: 24px; height: 24px; border: 1.6px solid currentColor; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
 .activity img { display: block; }
+
+/* fade the app in over the boot screen (index.html) */
+.workbench, .welcome, .connecting { animation: app-in 0.18s ease-out; }
+@keyframes app-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .workbench, .welcome, .connecting { animation: none; } }

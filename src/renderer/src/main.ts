@@ -786,19 +786,30 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
   renderStatus()
 }
 
+/** Text under the boot screen's progress bar (index.html), until the app replaces it. */
+function bootStatus(text: string): void {
+  const el = document.getElementById('boot-status')
+  if (el) el.textContent = text
+}
+
 async function start(): Promise<void> {
   // Listen for the host port before asking for it: it can arrive before the reply.
   const hostReady = waitForHostPort()
+  bootStatus('Loading…')
   const init = await neon.invoke('window:init') as WindowInit
   setPlatform(init.sep, init.platform)
   if (!init.folder) {
     renderWelcome(init)
     return
   }
+  const name = workspaceLabel(init.folder, basename)
+  bootStatus(`Starting workspace ${name}…`)
   const host = await hostReady
   handleAuthPrompts(host)
+  if (!init.remote) bootStatus(`Opening ${name}…`)
   const info = init.remote ? await connectScreen(init, host) : await host.call<WorkspaceInfo>('ws.info')
   setPlatform(info.sep, info.platform)
+  bootStatus('Loading editor…')
   await renderWorkbench(init, host, info)
 }
 

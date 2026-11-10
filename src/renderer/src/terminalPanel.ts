@@ -6,7 +6,7 @@ import type { GitStatus, SshHostEntry, TermCreated } from '../../shared/protocol
 import { monaco, palette } from './monacoSetup'
 import { neon, type Host } from './rpc'
 import { FileTree } from './tree'
-import { ask, errorMessage, showMenu, toast } from './ui'
+import { ask, errorMessage, modal, showMenu, toast } from './ui'
 import { basename, dirname, h, icon, pathKey, relative, tildify } from './util'
 
 interface TermView {
@@ -28,6 +28,10 @@ interface TermView {
    * are not the workspace's, so it has no file tree.
    */
   target: string
+  /** Home folder of the machine the shell runs on (for "~" in the tree header). */
+  home: string
+  /** Hostname the shell first reported, for a shell on another machine (to notice `ssh`). */
+  machineName: string
 }
 
 const XTERM_THEME = {
@@ -100,7 +104,8 @@ export class BottomPanel {
       this.render()
     })
     ctx.host.on('fs.changed', ({ dirs }: { dirs: string[] }) => {
-      for (const tv of this.terms) void tv.tree.refresh(dirs)
+      // Workspace folders only: trees on other machines refresh at each prompt instead.
+      for (const tv of this.terms) if (!tv.target) void tv.tree.refresh(dirs)
     })
     monaco.editor.onDidChangeMarkers(() => {
       if (this.tab === 'problems') this.renderProblems()
@@ -129,7 +134,7 @@ export class BottomPanel {
   }
 
   gitChanged(status: GitStatus): void {
-    for (const tv of this.terms) tv.tree.setGit(status)
+    for (const tv of this.terms) if (!tv.target) tv.tree.setGit(status)
   }
 
   focus(): void {
@@ -188,15 +193,30 @@ export class BottomPanel {
       return null
     }
 
+    const where = created.target ?? ''
+    // The tree browses the machine the shell runs on. For another machine than the workspace's,
+    // files cannot open in this window's editor, so they offer a new window for their folder.
     const tree = new FileTree(
-      {
-        host: this.ctx.host,
-        workspaceRoot: this.ctx.root,
-        remoteHost: this.ctx.sshHost,
-        getGit: this.ctx.getGit,
-        openFile: (p) => this.ctx.openFile(p),
-        extraMenu: (p) => [{ label: 'Reveal in Explorer', run: () => this.ctx.revealInExplorer(p) }]
-      },
+      where
+        ? {
+            host: this.ctx.host,
+            workspaceRoot: '',
+            target: where,
+            remoteHost: where === 'local' ? '' : where,
+            getGit: () => null,
+            openFile: (p) => void this.openElsewhere(where, dirname(p), basename(p)),
+            extraMenu: (p, isDir) => [
+              { label: 'Open Folder in New Window', run: () => void this.openElsewhere(where, isDir ? p : dirname(p)) }
+            ]
+          }
+        : {
+            host: this.ctx.host,
+            workspaceRoot: this.ctx.root,
+            remoteHost: this.ctx.sshHost,
+            getGit: this.ctx.getGit,
+            openFile: (p) => this.ctx.openFile(p),
+            extraMenu: (p) => [{ label: 'Reveal in Explorer', run: () => this.ctx.revealInExplorer(p) }]
+          },
       'Empty folder'
     )
     const tv: TermView = {
@@ -210,7 +230,10 @@ export class BottomPanel {
       remoteHost: '',
       following: true,
       exited: false,
-      target: created.target ?? ''
+      target: where,
+      // A shell elsewhere starts in its home folder.
+      home: where ? created.cwd : this.ctx.home,
+      machineName: ''
     }
     this.terms.push(tv)
     term.onData((data) => {
@@ -258,9 +281,26 @@ export class BottomPanel {
         { label: 'Paste', run: () => { paste(); term.focus() } }
       ])
     })
-    if (!tv.target) void tree.setRoot(created.cwd)
+    void tree.setRoot(created.cwd)
     this.select(tv)
     return tv
+  }
+
+  /** A file or folder on another machine: offer to open its folder as a workspace in a new window. */
+  private async openElsewhere(target: string, dir: string, file?: string): Promise<void> {
+    const machine = target === 'local' ? 'this machine' : target
+    const r = await modal({
+      title: file ? `${file} is on ${machine}` : `Open ${basename(dir) || dir}`,
+      message: `${file ? 'This window edits files of its own workspace only. ' : ''}Open ${dir} on ${machine} in a new window?`,
+      buttons: ['Open in New Window', 'Cancel']
+    })
+    if (r.button !== 0) return
+    try {
+      if (target === 'local') await neon.invoke('workspace:open', dir)
+      else await neon.invoke('workspace:openRemote', target, dir)
+    } catch (err) {
+      toast(`Could not open ${dir}: ${errorMessage(err)}`, 'error')
+    }
   }
 
   /** Opens a terminal on `target` and types `command` into it, as if the user had (plugins use this). */
@@ -334,6 +374,15 @@ export class BottomPanel {
     if (!tv) return
     tv.cwd = cwd
     if (tv.target) {
+      // Shell on another machine: its first report names that machine; a later different name
+      // means `ssh` was typed in it.
+      if (!tv.machineName && reportedHost) tv.machineName = reportedHost
+      const short = (n: string): string => n.toLowerCase().split('.')[0]
+      tv.remoteHost = reportedHost && tv.machineName && short(reportedHost) !== short(tv.machineName) ? reportedHost : ''
+      if (tv.following && !tv.remoteHost) {
+        // Not watched, so re-read at every prompt: picks up files the last command made.
+        void tv.tree.setRoot(cwd).then(() => tv.tree.refreshAll())
+      }
       if (tv === this.active) this.render()
       return
     }
@@ -362,30 +411,16 @@ export class BottomPanel {
       this.miniStatus.textContent = ''
       return
     }
-    if (tv.target) {
-      const local = tv.target === 'local'
-      this.miniHead.replaceChildren(
-        h('span', { class: `host-badge ${local ? 'local' : 'remote'}`, text: tv.target, title: local ? 'Shell is on this machine' : `Shell is on ${tv.target}` }),
-        h('span', { class: 'mini-path', title: tv.cwd }, h('bdi', { text: tv.cwd }))
-      )
-      const where = this.ctx.sshHost || 'this machine'
-      this.miniStatus.textContent = `${local ? 'Shell on this machine' : `Shell on ${tv.target}`}. The workspace and file tree stay on ${where}.`
-      this.miniStatus.classList.add('paused')
-      tv.tree.el.style.display = 'none'
-      return
-    }
     const root = tv.tree.getRoot() || tv.cwd
     const shown = tv.remoteHost ? tv.cwd : root
-    const display = tildify(shown, this.ctx.home)
+    const display = tildify(shown, tv.home)
+    // Which machine the shell is on: where it was opened, unless `ssh` took it elsewhere.
+    const machine = tv.remoteHost || (tv.target === 'local' ? '' : tv.target) || (tv.target ? '' : this.ctx.sshHost)
     const head: (HTMLElement | null)[] = [
       h('span', {
-        class: `host-badge ${tv.remoteHost || this.ctx.sshHost ? 'remote' : 'local'}`,
-        text: tv.remoteHost || this.ctx.sshHost || 'local',
-        title: tv.remoteHost
-          ? `Shell moved to ${tv.remoteHost}`
-          : this.ctx.sshHost
-            ? `Shell is on ${this.ctx.sshHost}`
-            : 'Shell is on this machine'
+        class: `host-badge ${machine ? 'remote' : 'local'}`,
+        text: machine || 'local',
+        title: tv.remoteHost ? `Shell moved to ${tv.remoteHost}` : machine ? `Shell is on ${machine}` : 'Shell is on this machine'
       }),
       h('span', { class: 'mini-path', title: shown }, h('bdi', { text: display }))
     ]
@@ -418,14 +453,18 @@ export class BottomPanel {
     let status: string
     let paused = false
     if (tv.remoteHost) {
-      status = `Shell is on ${tv.remoteHost}. Open it with "Connect to SSH Host" to browse its files.`
+      status = `Shell moved to ${tv.remoteHost} (ssh). To browse it here, right-click this terminal's tab and switch it to that host.`
       paused = true
     } else if (!tv.following) {
       status = 'Browsing above cwd, not following'
       paused = true
     } else {
       const rel = relative(this.ctx.root, tv.cwd)
-      status = rel === tv.cwd ? 'Following terminal cwd (outside the project)' : 'Following terminal cwd'
+      status = tv.target
+        ? `Following terminal cwd on ${tv.target === 'local' ? 'this machine' : tv.target}`
+        : rel === tv.cwd
+          ? 'Following terminal cwd (outside the project)'
+          : 'Following terminal cwd'
     }
     this.miniStatus.textContent = status
     this.miniStatus.classList.toggle('paused', paused)

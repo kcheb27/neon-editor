@@ -125,7 +125,7 @@ function createWindow(ws: Workspace | null, saved?: SavedWindow): BrowserWindow 
     minWidth: 640,
     minHeight: 400,
     show: false,
-    backgroundColor: '#14161F',
+    backgroundColor: '#10121A', // matches the boot screen in index.html, so nothing flashes
     title: ws ? `${labelOf(ws.folder)} - Neon Editor` : 'Neon Editor',
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#10121A', symbolColor: '#8A93B0', height: 36 },

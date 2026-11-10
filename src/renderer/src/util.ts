@@ -71,14 +71,25 @@ export function icon(name: IconName, size = 16, strokeWidth = 1.8): SVGSVGElemen
   return svg
 }
 
-// ---------- paths (the platform separator is set once at startup) ----------
+// ---------- paths ----------
+// A window can show paths from two kinds of machine at once (a Windows workspace with a terminal
+// on a Linux SSH host, or the reverse), so each helper goes by the style of the path itself and
+// falls back to the workspace's separator only when a path does not say.
 
 let SEP = '/'
-let WINDOWS = false
 
-export function setPlatform(sep: string, platform: string): void {
+export function setPlatform(sep: string, _platform: string): void {
   SEP = sep
-  WINDOWS = platform === 'win32'
+}
+
+/** True for "C:\..." / "C:/..." and UNC "\\server\share" paths. */
+const isWindowsPath = (p: string): boolean => /^[a-zA-Z]:([\\/]|$)|^\\\\/.test(p)
+
+/** The separator a path uses. */
+function sepOf(p: string): string {
+  if (p.startsWith('/')) return '/'
+  if (isWindowsPath(p)) return p.includes('\\') || !p.includes('/') ? '\\' : '/'
+  return SEP
 }
 
 export function basename(p: string): string {
@@ -92,18 +103,19 @@ export function dirname(p: string): string {
   const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   if (i < 0) return p
   const dir = trimmed.slice(0, i)
-  if (dir === '') return SEP // "/usr" -> "/"
-  if (/^[a-zA-Z]:$/.test(dir)) return dir + SEP // "C:\Users" -> "C:\"
+  if (dir === '') return trimmed[0] // "/usr" -> "/"
+  if (/^[a-zA-Z]:$/.test(dir)) return dir + trimmed[i] // "C:\Users" -> "C:\"
   return dir
 }
 
 export function join(dir: string, name: string): string {
-  return /[\\/]$/.test(dir) ? dir + name : dir + SEP + name
+  return /[\\/]$/.test(dir) ? dir + name : dir + sepOf(dir) + name
 }
 
+// Windows paths compare case-insensitively; POSIX paths (local or SSH) do not.
 const norm = (p: string): string => {
   const s = p.replace(/[\\/]+$/, '')
-  return WINDOWS ? s.toLowerCase() : s
+  return isWindowsPath(p) ? s.toLowerCase() : s
 }
 
 /** A key that compares equal for the same path (case-insensitive on Windows). */

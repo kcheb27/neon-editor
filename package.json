@@ -57,6 +57,9 @@
           ]
         }
       ]
+    },
+    "portable": {
+      "splashImage": "build/splash.bmp"
     }
   }
 }

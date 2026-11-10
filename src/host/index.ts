@@ -3,6 +3,7 @@
 // connection) and talks to each window over its own MessagePort.
 
 import type { MessagePortMain } from 'electron'
+import * as os from 'node:os'
 import type { GitStatus, RemoteStatus, WireMessage } from '../shared/protocol'
 import { isRemoteId, makeRemoteId, parseRemoteId } from '../shared/workspaceId'
 import type { Backend } from './backend.ts'
@@ -117,10 +118,11 @@ const handlers: Record<string, Handler> = {
     pending?.resolve(typeof a.value === 'string' ? a.value : null)
   },
 
-  'fs.readdir': (_c, a) => backend.readdir(a.path),
-  'fs.create': (_c, a) => backend.create(a.path, a.kind),
-  'fs.rename': (_c, a) => backend.rename(a.from, a.to),
-  'fs.trash': (_c, a) => backend.trash(a.path),
+  // `target` (optional) names another machine, for the file tree of a terminal running there.
+  'fs.readdir': (_c, a) => fsFor(a.target).readdir(a.path),
+  'fs.create': (_c, a) => fsFor(a.target).create(a.path, a.kind),
+  'fs.rename': (_c, a) => fsFor(a.target).rename(a.from, a.to),
+  'fs.trash': (_c, a) => fsFor(a.target).trash(a.path),
   'fs.list': () => backend.list(),
   // Plain text access for plugins. Files open in an editor are reloaded by the file watcher.
   'fs.readText': async (_c, a) => decodeText(await backend.readFile(a.path)).text,
@@ -163,6 +165,16 @@ const otherHosts = new Map<string, RemoteBackend>()
 // Prompts for extra hosts go to a window as usual, but their connection state must not
 // replace the workspace's own in the status bar.
 const otherPrompter: Prompter = { ask: (req) => prompter.ask(req), status() {} }
+
+let localFs: LocalBackend | null = null
+
+/** File access on `target` ("local", an SSH host, or empty for the workspace's own machine). */
+function fsFor(target: unknown): Backend {
+  const t = typeof target === 'string' ? target.trim() : ''
+  if (!t || (t === 'local' ? !backend.remote : t === workspaceSshHost)) return backend
+  if (t === 'local') return (localFs ??= new LocalBackend(os.homedir()))
+  return otherHost(t)
+}
 
 function otherHost(host: string): RemoteBackend {
   let b = otherHosts.get(host)
@@ -258,4 +270,5 @@ process.on('exit', () => {
   terminals.dispose()
   backend.dispose()
   for (const b of otherHosts.values()) b.dispose()
+  localFs?.dispose()
 })

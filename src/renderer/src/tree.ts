@@ -14,6 +14,11 @@ export interface TreeContext {
   remoteHost?: string
   getGit(): GitStatus | null
   openFile(path: string): void
+  /**
+   * Another machine to browse instead of the workspace's ("local" or an SSH host), for the tree
+   * of a terminal running there. Such a tree is not watched: call refreshAll() to update it.
+   */
+  target?: string
   /** Optional extra context-menu entries, e.g. "Open in Terminal". */
   extraMenu?(path: string, isDir: boolean): { label: string; run: () => void }[]
 }
@@ -79,7 +84,7 @@ export class FileTree {
 
   private watch(dir: string): void {
     const key = pathKey(dir)
-    if (isInside(this.ctx.workspaceRoot, dir) || this.watched.has(key)) return
+    if (this.ctx.target || isInside(this.ctx.workspaceRoot, dir) || this.watched.has(key)) return
     this.watched.set(key, dir)
     this.ctx.host.notify('watch.acquire', { dir })
   }
@@ -100,7 +105,7 @@ export class FileTree {
     let pending = this.loading.get(key)
     if (pending) return pending
     pending = this.ctx.host
-      .call<DirEntry[]>('fs.readdir', { path: dir })
+      .call<DirEntry[]>('fs.readdir', { path: dir, target: this.ctx.target })
       .then((entries) => {
         this.children.set(key, entries)
         this.watch(dir)
@@ -128,6 +133,11 @@ export class FileTree {
       await Promise.all(reloads)
       this.render()
     }
+  }
+
+  /** Re-read every expanded folder (for trees that are not watched). */
+  refreshAll(): Promise<void> {
+    return this.refresh([...this.expanded.values()])
   }
 
   async reveal(path: string): Promise<void> {
@@ -290,7 +300,7 @@ export class FileTree {
     if (!name) return
     const target = join(dir, name.replace(/[\\/]+$/, ''))
     try {
-      await this.ctx.host.call('fs.create', { path: target, kind })
+      await this.ctx.host.call('fs.create', { path: target, kind, target: this.ctx.target })
       this.expanded.set(pathKey(dir), dir)
       await this.refresh([dir, dirname(target)])
       await this.reveal(target)
@@ -305,7 +315,7 @@ export class FileTree {
     if (!name || name === basename(p)) return
     const target = join(dirname(p), name)
     try {
-      await this.ctx.host.call('fs.rename', { from: p, to: target })
+      await this.ctx.host.call('fs.rename', { from: p, to: target, target: this.ctx.target })
       await this.refresh([dirname(p)])
       this.selected = target
       this.render()
@@ -325,7 +335,7 @@ export class FileTree {
     })
     if (choice !== 0) return
     try {
-      if (remote) await this.ctx.host.call('fs.trash', { path: p })
+      if (remote) await this.ctx.host.call('fs.trash', { path: p, target: this.ctx.target })
       else await neon.invoke('shell:trash', p)
       await this.refresh([dirname(p)])
     } catch (err) {
