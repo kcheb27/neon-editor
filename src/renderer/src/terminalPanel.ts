@@ -4,9 +4,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import type { GitStatus, TermCreated } from '../../shared/protocol'
 import { monaco, palette } from './monacoSetup'
-import type { Host } from './rpc'
+import { neon, type Host } from './rpc'
 import { FileTree } from './tree'
-import { errorMessage, toast } from './ui'
+import { errorMessage, showMenu, toast } from './ui'
 import { basename, dirname, h, icon, pathKey, relative, tildify } from './util'
 
 interface TermView {
@@ -210,17 +210,40 @@ export class BottomPanel {
       const k = e.key.toLowerCase()
       if (e.ctrlKey && e.shiftKey && ['p', 'f', 'e', 'g', 'n', '`', '~'].includes(k)) return false
       if (e.ctrlKey && !e.shiftKey && ['p', 'b', 'j', '`', 'tab'].includes(k)) return false
-      if (e.ctrlKey && k === 'c' && term.hasSelection()) {
-        void navigator.clipboard.writeText(term.getSelection())
-        term.clearSelection()
+      // Copy: Ctrl+C with a selection (otherwise it is SIGINT), or Ctrl+Shift+C.
+      if (e.ctrlKey && k === 'c' && (term.hasSelection() || e.shiftKey)) {
+        e.preventDefault()
+        copySelection()
         return false
       }
-      if (e.ctrlKey && k === 'v') {
+      // Paste: Ctrl+V, Ctrl+Shift+V or Shift+Insert.
+      if ((e.ctrlKey && k === 'v') || (e.shiftKey && k === 'insert')) {
         e.preventDefault()
-        void navigator.clipboard.readText().then((text) => term.paste(text))
+        paste()
         return false
       }
       return true
+    })
+    const copySelection = (): void => {
+      if (!term.hasSelection()) return
+      void neon.invoke('clipboard:write', term.getSelection()).catch((err) => toast(`Copy failed: ${errorMessage(err)}`, 'error'))
+      term.clearSelection()
+    }
+    const paste = (): void => {
+      void neon
+        .invoke('clipboard:read')
+        .then((text) => {
+          if (typeof text === 'string' && text) term.paste(text)
+        })
+        .catch((err) => toast(`Paste failed: ${errorMessage(err)}`, 'error'))
+    }
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+      const hadSelection = term.hasSelection()
+      showMenu(e.clientX, e.clientY, [
+        ...(hadSelection ? [{ label: 'Copy', run: copySelection }] : []),
+        { label: 'Paste', run: () => { paste(); term.focus() } }
+      ])
     })
     void tree.setRoot(created.cwd)
     this.select(tv)

@@ -12,7 +12,9 @@ const INVOKE = new Set([
   'ssh:hosts',
   'shell:trash',
   'shell:reveal',
-  'dialog:confirm'
+  'dialog:confirm',
+  'clipboard:read',
+  'clipboard:write'
 ])
 const SEND = new Set(['window:layout'])
 const LISTEN = new Set(['window:count'])

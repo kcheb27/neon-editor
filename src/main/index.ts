@@ -1,7 +1,7 @@
 // Main process: creates windows, starts one Workspace Host per project, and remembers where
 // each project's windows were so they come back on the same monitors.
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, MessageChannelMain, screen, shell, utilityProcess } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MessageChannelMain, screen, shell, utilityProcess } from 'electron'
 import type { Rectangle, UtilityProcess } from 'electron'
 import * as fs from 'node:fs'
 import { createRequire } from 'node:module'
@@ -371,6 +371,11 @@ ipcMain.on('window:layout', (event, layout: WindowLayout) => {
   m.saved.layout = layout
   persist(m.ws)
 })
+
+// Clipboard goes through the main process: navigator.clipboard can fail silently in a
+// packaged (file://) window, so the terminal's copy and paste would do nothing.
+ipcMain.handle('clipboard:read', () => clipboard.readText())
+ipcMain.handle('clipboard:write', (_event, text: string) => clipboard.writeText(String(text)))
 
 ipcMain.handle('shell:trash', (_event, target: string) => shell.trashItem(target))
 ipcMain.handle('shell:reveal', (_event, target: string) => shell.showItemInFolder(target))
