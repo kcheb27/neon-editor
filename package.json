@@ -10,12 +10,14 @@
     "start": "electron-vite build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node --test --test-force-exit --test-timeout=120000 \"test/**/*.test.ts\"",
-    "smoke": "electron-vite build && node test/run-smoke.cjs"
+    "smoke": "electron-vite build && node test/run-smoke.cjs",
+    "package:win": "electron-vite build && electron-builder --win portable --x64"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/ssh2": "^1.15.6",
     "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.7"
@@ -35,5 +37,26 @@
   },
   "overrides": {
     "dompurify": "^3.4.17"
+  },
+  "build": {
+    "appId": "com.neoneditor.app",
+    "productName": "neon-editor",
+    "directories": {
+      "output": "dist"
+    },
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
   }
 }
