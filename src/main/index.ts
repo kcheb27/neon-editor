@@ -96,7 +96,21 @@ function isOnScreen(b: Rectangle): boolean {
   })
 }
 
-function defaultBounds(offset: number): Rectangle {
+function defaultBounds(offset: number, near?: Rectangle): Rectangle {
+  if (near) {
+    // Next to the window it was opened from, on that window's monitor, shifted down and right
+    // so both title bars show. Wraps back to the top-left of the monitor when it runs out.
+    const area = screen.getDisplayMatching(near).workArea
+    const width = Math.min(near.width, area.width)
+    const height = Math.min(near.height, area.height)
+    let x = near.x + 32
+    let y = near.y + 32
+    if (x + width > area.x + area.width || y + height > area.y + area.height) {
+      x = area.x + 16
+      y = area.y + 16
+    }
+    return { x, y, width, height }
+  }
   const area = screen.getPrimaryDisplay().workArea
   const width = Math.min(1440, area.width - 80)
   const height = Math.min(900, area.height - 80)
@@ -115,10 +129,15 @@ function announceCount(ws: Workspace): void {
   })
 }
 
-function createWindow(ws: Workspace | null, saved?: SavedWindow): BrowserWindow {
+/**
+ * `from` is the window the user asked from (e.g. "New Window"): the new one opens beside it, on
+ * the same monitor, and comes to the front.
+ */
+function createWindow(ws: Workspace | null, saved?: SavedWindow, from?: BrowserWindow | null): BrowserWindow {
   const record: SavedWindow = saved ?? { bounds: null, maximized: false, layout: null }
   // A window saved on a monitor that is no longer connected opens on the primary display.
-  const bounds = record.bounds && isOnScreen(record.bounds) ? record.bounds : defaultBounds(meta.size)
+  const near = from && !from.isDestroyed() && !from.isMinimized() ? from.getNormalBounds() : undefined
+  const bounds = record.bounds && isOnScreen(record.bounds) ? record.bounds : defaultBounds(meta.size, near)
 
   const win = new BrowserWindow({
     ...bounds,
@@ -143,7 +162,27 @@ function createWindow(ws: Workspace | null, saved?: SavedWindow): BrowserWindow 
   if (ws) ws.windows.push(win)
 
   if (record.maximized) win.maximize()
-  if (!smokeScript) win.once('ready-to-show', () => win.show())
+  if (!smokeScript) {
+    // Show on the first paint. ready-to-show does not always arrive (the window then stayed
+    // invisible, yet was counted and saved, and only appeared on the next start), so the
+    // page finishing loading, or a few seconds passing, shows it too.
+    let shown = false
+    const reveal = (): void => {
+      if (shown || win.isDestroyed()) return
+      shown = true
+      clearTimeout(fallback)
+      win.show()
+      if (from) {
+        win.moveTop()
+        win.focus()
+      }
+    }
+    const fallback = setTimeout(reveal, 3000)
+    win.once('ready-to-show', reveal)
+    win.webContents.once('did-finish-load', reveal)
+    win.webContents.once('did-fail-load', reveal)
+    win.once('closed', () => clearTimeout(fallback))
+  }
 
   const remember = (): void => {
     const m = meta.get(win)
@@ -364,7 +403,7 @@ ipcMain.handle('ssh:hosts', (): SshHostEntry[] => {
 ipcMain.handle('window:new', (event) => {
   const win = senderWindow(event)
   const m = win ? meta.get(win) : undefined
-  createWindow(m?.ws ?? null)
+  createWindow(m?.ws ?? null, undefined, win)
 })
 
 ipcMain.on('window:layout', (event, layout: WindowLayout) => {
