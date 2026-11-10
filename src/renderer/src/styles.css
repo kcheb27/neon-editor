@@ -239,3 +239,5 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 .tab .page-icon { display: inline-flex; color: var(--accent); }
 .tab .page-icon svg, .tab .page-icon img { width: 14px; height: 14px; }
 .tab .page-icon .activity-letter { width: 14px; height: 14px; font-size: 9px; border-width: 1.2px; border-radius: 3px; }
+.empty-actions { display: flex; gap: 8px; margin-bottom: 6px; }
+.empty-actions:empty { display: none; }

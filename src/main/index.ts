@@ -317,17 +317,26 @@ function startWorkspace(folder: string): Workspace {
   return ws
 }
 
-function openWorkspace(folderArg: string, from?: BrowserWindow): void {
+/** `file`: also open this file in the project's (first) window. */
+function openWorkspace(folderArg: string, from?: BrowserWindow, file?: string): void {
   const folder = isRemoteId(folderArg) ? folderArg : path.resolve(folderArg)
   const existing = workspaces.get(folder)
   if (existing) {
-    existing.windows[0]?.focus()
+    const win = existing.windows[0]
+    win?.focus()
+    if (win && file) win.webContents.send('window:openFile', file)
     return
   }
   const ws = startWorkspace(folder)
   state.recent = [folder, ...state.recent.filter((f) => f !== folder)].slice(0, 12)
   const saved = state.workspaces[folder]?.windows ?? []
   const records: SavedWindow[] = saved.length ? saved : [{ bounds: null, maximized: false, layout: null }]
+  if (file) {
+    // Open the file as the active tab of the first window, after the tabs it had.
+    const first = records[0]
+    const tabs = (first.layout?.tabs ?? []).filter((t) => t !== file)
+    records[0] = { ...first, layout: { ...(first.layout ?? {}), tabs: [...tabs, file], active: file, activePage: null } as WindowLayout }
+  }
 
   // An empty window that asked for the folder becomes the project's first window.
   const fromMeta = from ? meta.get(from) : undefined
@@ -378,6 +387,29 @@ ipcMain.handle('workspace:pick', async (event) => {
   if (!win) return
   const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Open Folder' })
   if (!result.canceled && result.filePaths[0]) openWorkspace(result.filePaths[0], win)
+})
+
+// Pick files on this machine. Returns their paths ([] if cancelled).
+ipcMain.handle('dialog:openFiles', async (event, defaultPath?: string) => {
+  const win = senderWindow(event)
+  if (!win) return []
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Open File',
+    properties: ['openFile', 'multiSelections'],
+    defaultPath: typeof defaultPath === 'string' && defaultPath && fs.existsSync(defaultPath) ? defaultPath : undefined
+  })
+  return result.canceled ? [] : result.filePaths
+})
+
+// From a window with no project (the welcome screen): open a file's folder as the project,
+// with the file open in it.
+ipcMain.handle('workspace:openFile', async (event) => {
+  const win = senderWindow(event)
+  if (!win) return
+  const result = await dialog.showOpenDialog(win, { title: 'Open File', properties: ['openFile'] })
+  const file = result.filePaths[0]
+  if (result.canceled || !file) return
+  openWorkspace(path.dirname(file), win, file)
 })
 
 ipcMain.handle('workspace:open', (event, folder: string) => {

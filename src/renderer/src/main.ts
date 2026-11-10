@@ -145,6 +145,8 @@ async function connectScreen(init: WindowInit, host: Host): Promise<WorkspaceInf
 function renderWelcome(init: WindowInit): void {
   const open = h('button', { class: 'btn', text: 'Open Folder…' })
   open.addEventListener('click', () => void neon.invoke('workspace:pick'))
+  const openFileBtn = h('button', { class: 'btn ghost', text: 'Open File…' })
+  openFileBtn.addEventListener('click', () => void neon.invoke('workspace:openFile').catch((err) => toast(errorMessage(err), 'error')))
   const connect = h('button', { class: 'btn ghost', text: 'Connect to SSH Host…' })
   connect.addEventListener('click', () => void connectToHost())
   const recent = init.recent.slice(0, 8).map((folder) => {
@@ -170,7 +172,7 @@ function renderWelcome(init: WindowInit): void {
         { class: 'welcome-card' },
         h('h1', {}, 'Neon ', h('b', { text: 'Editor' })),
         h('div', { class: 'note', text: 'Open a folder to start. Each folder gets its own shared workspace, and you can open it in as many windows as you have monitors.' }),
-        h('div', { style: 'display:flex;gap:8px' }, open, connect),
+        h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, open, openFileBtn, connect),
         recent.length ? h('div', { class: 'section-title', style: 'padding:0', text: 'Recent' }) : null,
         h('div', { class: 'recent' }, ...recent)
       )
@@ -227,6 +229,35 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
   const gitView = new GitView(root, openFile)
   gitView.render(null)
 
+  /**
+   * Open File: the system file picker for a local project (any file on this machine); for an SSH
+   * project, a path on the host (the picker could only show this machine's files).
+   */
+  async function openFileDialog(): Promise<void> {
+    if (info.remote) {
+      const dir = editors.activePath ? dirname(editors.activePath) : root
+      const typed = await ask(`File on ${info.sshHost} to open (absolute, or relative to ${tildify(root, info.home)})`, `${dir.replace(/\/+$/, '')}/`)
+      if (!typed?.trim() || typed.trim().endsWith('/')) return
+      const p = typed.trim()
+      const full = p.startsWith('/') ? p : p.startsWith('~/') ? `${info.home}${p.slice(1)}` : `${root.replace(/\/+$/, '')}/${p}`
+      await editors.open(full)
+      return
+    }
+    const files = (await neon.invoke('dialog:openFiles', editors.activePath ? dirname(editors.activePath) : root).catch(() => [])) as string[]
+    for (const f of files) await editors.open(f)
+  }
+  neon.on('window:openFile', (file: unknown) => {
+    if (typeof file === 'string') void editors.open(file)
+  })
+
+  const openFileHeaderBtn = h('button', { class: 'icon-btn', 'aria-label': 'Open file', title: 'Open File… (Ctrl+Alt+O)' }, icon('fileOpen', 14, 2))
+  openFileHeaderBtn.addEventListener('click', () => void openFileDialog())
+  const emptyOpenFile = h('button', { class: 'btn', text: 'Open File…' })
+  emptyOpenFile.addEventListener('click', () => void openFileDialog())
+  const emptyGoTo = h('button', { class: 'btn ghost', text: 'Go to File…' })
+  emptyGoTo.addEventListener('click', () => void quickOpen())
+  editors.setEmptyActions(emptyOpenFile, emptyGoTo)
+
   const refreshBtn = h('button', { class: 'icon-btn', 'aria-label': 'Refresh explorer', title: 'Refresh' }, icon('refresh', 14, 2))
   refreshBtn.addEventListener('click', () => void explorer.refresh([root, ...explorer.getExpanded()]))
   const views: Record<string, { title: string; icon: IconName; label: string; el: HTMLElement; iconEl?: () => Element }> = {
@@ -234,7 +265,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       title: `Explorer: ${label}`,
       icon: 'files',
       label: 'Explorer (Ctrl+Shift+E)',
-      el: h('div', { class: 'view' }, h('div', { class: 'section-title' }, h('span', { class: 'grow', text: `Explorer: ${label}` }), refreshBtn), explorer.el)
+      el: h('div', { class: 'view' }, h('div', { class: 'section-title' }, h('span', { class: 'grow', text: `Explorer: ${label}` }), openFileHeaderBtn, refreshBtn), explorer.el)
     },
     search: {
       title: 'Search',
@@ -718,6 +749,7 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
     { id: 'saveAll', label: 'File: Save All', keybinding: 'Ctrl+Alt+S', run: () => void editors.saveAll() },
     { id: 'close', label: 'View: Close Editor', keybinding: 'Ctrl+W', run: () => closeActiveTab() },
     { id: 'newWindow', label: 'Window: New Window for This Project', keybinding: 'Ctrl+Shift+N', run: () => void neon.invoke('window:new') },
+    { id: 'openFile', label: 'File: Open File…', keybinding: 'Ctrl+Alt+O', run: () => void openFileDialog() },
     { id: 'openFolder', label: 'File: Open Folder…', keybinding: 'Ctrl+O', run: () => void neon.invoke('workspace:pick') },
     { id: 'connect', label: 'Remote: Connect to SSH Host…', run: () => void connectToHost() },
     { id: 'remote', label: 'View: Show Remote Explorer', run: () => showView('remote') },
@@ -831,7 +863,8 @@ async function renderWorkbench(init: WindowInit, host: Host, info: WorkspaceInfo
       else if (!shift && alt && k === 's') run = () => void editors.saveAll()
       else if (!shift && !alt && k === 'w') run = () => closeActiveTab()
       else if (shift && k === 'n') run = () => void neon.invoke('window:new')
-      else if (!shift && k === 'o') run = () => void neon.invoke('workspace:pick')
+      else if (!shift && alt && k === 'o') run = () => void openFileDialog()
+      else if (!shift && !alt && k === 'o') run = () => void neon.invoke('workspace:pick')
       else if (!shift && k === 'b') run = () => setSidebar(!sidebarOn)
       else if (!shift && (k === '`' || k === 'j')) run = () => togglePanel()
       else if (shift && (k === '`' || k === '~')) run = () => { togglePanel(true); void panel.newTerminal() }

@@ -14,6 +14,8 @@ const INVOKE = new Set([
   'shell:reveal',
   'shell:openExternal',
   'dialog:confirm',
+  'dialog:openFiles',
+  'workspace:openFile',
   'clipboard:read',
   'clipboard:write',
   'plugins:list',
@@ -23,7 +25,7 @@ const INVOKE = new Set([
   'plugins:storageSet'
 ])
 const SEND = new Set(['window:layout'])
-const LISTEN = new Set(['window:count'])
+const LISTEN = new Set(['window:count', 'window:openFile'])
 
 contextBridge.exposeInMainWorld('neon', {
   invoke(channel: string, ...args: unknown[]): Promise<unknown> {

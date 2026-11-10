@@ -63,6 +63,7 @@ export class EditorArea {
   private active: string | null = null // a file path or a PAGE+id key
   private pages = new Map<string, PageTab>() // PAGE+id -> page
   private pageHost: HTMLElement
+  private emptyActions: HTMLElement
   private tabsEl: HTMLElement
   private crumbsEl: HTMLElement
   private emptyEl: HTMLElement
@@ -97,6 +98,8 @@ export class EditorArea {
     )
     this.pageHost = h('div', { class: 'page-host' })
     this.pageHost.style.display = 'none'
+    this.emptyActions = h('div', { class: 'empty-actions' })
+    this.emptyEl.insertBefore(this.emptyActions, this.emptyEl.children[1] ?? null)
     editorHost.append(this.emptyEl, this.pageHost)
     this.el = h('div', { style: 'flex:1;min-height:0;display:flex;flex-direction:column' }, this.tabsEl, this.crumbsEl, editorHost)
     this.editor = createEditor(editorHost)
@@ -125,6 +128,11 @@ export class EditorArea {
       this.onChange()
     })
     this.render()
+  }
+
+  /** Buttons shown on the empty editor screen (when no tab is open). */
+  setEmptyActions(...buttons: HTMLElement[]): void {
+    this.emptyActions.replaceChildren(...buttons)
   }
 
   /** The active file, or null when no file tab (or a page tab) is active. */
